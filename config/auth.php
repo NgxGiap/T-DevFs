@@ -1,5 +1,11 @@
 <?php
 
+use App\Models\User;
+use App\Models\Driver;
+use App\Models\Branch;
+use App\Models\Customer;
+
+
 return [
 
     /*
@@ -41,9 +47,19 @@ return [
             'provider' => 'users',
         ],
 
+        'admin' => [
+            'driver' => 'session',
+            'provider' => 'users',
+        ],
+
+        'driver' => [
+            'driver' => 'session',
+            'provider' => 'drivers',
+        ],
+
         'api' => [
-          'driver' => 'passport',
-          'provider' => 'users',
+            'driver' => 'passport',
+            'provider' => 'users',
         ],
     ],
 
@@ -67,8 +83,14 @@ return [
     'providers' => [
         'users' => [
             'driver' => 'eloquent',
-            'model' => App\User::class,
+            'model' => User::class,
         ],
+
+        'drivers' => [
+            'driver' => 'eloquent',
+            'model' => Driver::class,
+        ],
+
 
         // 'users' => [
         //     'driver' => 'database',
@@ -94,8 +116,9 @@ return [
     'passwords' => [
         'users' => [
             'provider' => 'users',
-            'table' => 'password_resets',
+            'table' => 'password_reset_tokens',
             'expire' => 60,
+            'throttle' => 60,
         ],
     ],
 
