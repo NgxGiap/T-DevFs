@@ -16,69 +16,6 @@ document.addEventListener("DOMContentLoaded", function() {
         }
     }
     
-    // Show toast function (custom slide-in right)
-    window.showToast = function(message, type = 'info') {
-        // Remove old toast if exists
-        const oldToast = document.querySelector('.custom-toast');
-        if (oldToast) oldToast.remove();
-
-        // Create toast element
-        const toast = document.createElement('div');
-        toast.className = 'custom-toast fixed top-8 right-4 z-50 px-5 py-3 rounded-lg shadow-lg flex items-center gap-3 animate-toast-in';
-        toast.style.minWidth = '220px';
-        toast.style.maxWidth = '90vw';
-        toast.style.fontSize = '1rem';
-        toast.style.transition = 'transform 0.4s cubic-bezier(.4,2,.3,1), opacity 0.3s';
-        toast.style.transform = 'translateX(120%)';
-        toast.style.opacity = '0';
-
-        // Icon
-        const icon = document.createElement('i');
-        icon.className = 'fas';
-        switch(type) {
-            case 'success':
-                toast.classList.add('bg-green-500', 'text-white');
-                icon.classList.add('fa-check-circle');
-                break;
-            case 'error':
-                toast.classList.add('bg-red-500', 'text-white');
-                icon.classList.add('fa-times-circle');
-                break;
-            case 'warning':
-                toast.classList.add('bg-yellow-400', 'text-gray-900');
-                icon.classList.add('fa-exclamation-triangle');
-                break;
-            default:
-                toast.classList.add('bg-gray-800', 'text-white');
-                icon.classList.add('fa-info-circle');
-        }
-        icon.style.fontSize = '1.3em';
-        toast.appendChild(icon);
-
-        // Message
-        const msg = document.createElement('span');
-        msg.textContent = message;
-        toast.appendChild(msg);
-
-        // Add to DOM
-        document.body.appendChild(toast);
-
-        // Force reflow for animation
-        setTimeout(() => {
-            toast.style.transform = 'translateX(0)';
-            toast.style.opacity = '1';
-        }, 10);
-
-        // Hide and remove after 2.5s
-        setTimeout(() => {
-            toast.style.transform = 'translateX(120%)';
-            toast.style.opacity = '0';
-            setTimeout(() => {
-                if (toast.parentNode) toast.parentNode.removeChild(toast);
-            }, 400);
-        }, 2500);
-    };
-    
     // Product image gallery
     const mainImage = document.getElementById('main-product-image');
     const thumbnails = document.querySelectorAll('.product-thumbnail');
@@ -110,6 +47,18 @@ document.addEventListener("DOMContentLoaded", function() {
     
     // Helper: tính số tiền giảm giá tốt nhất cho 1 sản phẩm
     function calcBestDiscountAmount(price) {
+        // Debug log
+        console.log('calcBestDiscountAmount called with price:', price);
+        console.log('window.bestDiscountAmount:', window.bestDiscountAmount);
+        console.log('window.bestDiscountCode:', window.bestDiscountCode);
+        
+        // Sử dụng giá trị đã tính sẵn từ server thay vì tính lại
+        if (window.bestDiscountAmount && window.bestDiscountAmount > 0) {
+            console.log('Using server-calculated discount amount:', window.bestDiscountAmount);
+            return window.bestDiscountAmount;
+        }
+        
+        // Fallback: tính toán như cũ nếu không có giá trị từ server
         if (!bestDiscount) return 0;
         let discountAmount = 0;
         if (bestDiscount.discount_type === 'percentage') {
@@ -123,6 +72,7 @@ document.addEventListener("DOMContentLoaded", function() {
         if (bestDiscount.min_order_amount > 0 && price < bestDiscount.min_order_amount) {
             discountAmount = 0;
         }
+        console.log('Calculated discount amount:', discountAmount);
         return discountAmount;
     }
 
@@ -133,36 +83,41 @@ document.addEventListener("DOMContentLoaded", function() {
         document.querySelectorAll('.variant-input:checked').forEach(input => {
             variantAdjustment += parseFloat(input.dataset.priceAdjustment || 0);
         });
+        
+        // Calculate current variant price
+        const currentVariantPrice = window.basePrice + variantAdjustment;
+
         // Calculate topping price
         let toppingPrice = 0;
         document.querySelectorAll('.topping-input:checked').forEach(input => {
             toppingPrice += parseFloat(input.dataset.price || 0);
         });
-        // Tổng giá gốc (base + variant + topping)
-        const originalPrice = window.basePrice + variantAdjustment + toppingPrice;
-        // Tính số tiền giảm giá tốt nhất
-        const discountAmount = calcBestDiscountAmount(originalPrice);
-        // Giá sau giảm
-        const finalPrice = Math.max(0, originalPrice - discountAmount);
-        // Hiển thị
-        if (discountAmount > 0) {
-            basePriceDisplay.textContent = `${originalPrice.toLocaleString('vi-VN')}đ`;
+
+        // This is the price before any discounts, including toppings
+        const priceBeforeDiscount = currentVariantPrice; 
+        
+        // Calculate the discount amount based on the current variant's price
+        let discountAmount = 0;
+        if (bestDiscount) {
+            if (bestDiscount.discount_type === 'percentage') {
+                discountAmount = priceBeforeDiscount * (bestDiscount.discount_value / 100);
+            } else if (bestDiscount.discount_type === 'fixed_amount') {
+                discountAmount = bestDiscount.discount_value;
+            }
+        }
+        
+        // The total price顧客 pays, including toppings
+        const finalPrice = Math.max(0, priceBeforeDiscount - discountAmount) + toppingPrice;
+        const displayOriginalPrice = priceBeforeDiscount + toppingPrice;
+
+        // Update display
+        if (discountAmount > 0 && finalPrice < displayOriginalPrice) {
+            basePriceDisplay.textContent = `${Math.round(displayOriginalPrice).toLocaleString('vi-VN')} đ`;
             basePriceDisplay.classList.remove('hidden');
-            currentPriceDisplay.textContent = `${finalPrice.toLocaleString('vi-VN')}đ`;
+            currentPriceDisplay.textContent = `${Math.round(finalPrice).toLocaleString('vi-VN')} đ`;
         } else {
             basePriceDisplay.classList.add('hidden');
-            currentPriceDisplay.textContent = `${originalPrice.toLocaleString('vi-VN')}đ`;
-        }
-        // Highlight
-        if (discountAmount > 0) {
-            currentPriceDisplay.classList.add('text-orange-500');
-            currentPriceDisplay.classList.remove('text-green-500');
-        } else if (originalPrice !== window.basePrice) {
-            currentPriceDisplay.classList.add('text-green-500');
-            currentPriceDisplay.classList.remove('text-orange-500');
-        } else {
-            currentPriceDisplay.classList.add('text-orange-500');
-            currentPriceDisplay.classList.remove('text-green-500');
+            currentPriceDisplay.textContent = `${Math.round(displayOriginalPrice).toLocaleString('vi-VN')} đ`;
         }
     };
     
@@ -224,9 +179,15 @@ document.addEventListener("DOMContentLoaded", function() {
         // Get selected branch
         const branchId = document.getElementById('branch-select').value;
         if (!branchId) {
-            showToast('Vui lòng chọn chi nhánh trước khi thêm vào giỏ hàng', 'warning');
+            dtmodalShowToast('warning', {
+                title: 'Chọn chi nhánh',
+                message: 'Vui lòng chọn chi nhánh trước khi thêm vào giỏ hàng'
+            });
             return null;
         }
+        
+        // Lấy product_id từ data attribute của nút add-to-cart
+        const productId = document.getElementById('add-to-cart').getAttribute('data-product-id');
         
         // Get all selected variant values
         const selectedVariantValueIds = [];
@@ -247,7 +208,7 @@ document.addEventListener("DOMContentLoaded", function() {
         const quantity = parseInt(document.getElementById('quantity').textContent);
         
         return {
-            product_id: window.productId,
+            product_id: productId,
             variant_values: selectedVariantValueIds,
             branch_id: branchId,
             quantity: quantity,
@@ -272,19 +233,28 @@ document.addEventListener("DOMContentLoaded", function() {
         .then(response => response.json())
         .then(data => {
             if (data.success) {
-                showToast(data.message, 'success');
-                
-                // Update cart counter if needed
-                if (typeof window.updateCartCount === 'function' && data.count) {
-                    window.updateCartCount(data.count);
+                dtmodalShowToast('success', {
+                    title: 'Thành công',
+                    message: data.message
+                });
+                // Cập nhật số lượng giỏ hàng trên header
+                const cartCounter = document.getElementById('cart-counter');
+                if (cartCounter) {
+                    cartCounter.textContent = data.cart_count;
                 }
             } else {
-                showToast(data.message || 'Có lỗi khi thêm sản phẩm vào giỏ hàng', 'error');
+                dtmodalShowToast('error', {
+                    title: 'Lỗi',
+                    message: data.message || 'Có lỗi xảy ra'
+                });
             }
         })
         .catch(error => {
             console.error('Error:', error);
-            showToast('Có lỗi xảy ra khi thêm sản phẩm vào giỏ hàng', 'error');
+            dtmodalShowToast('error', {
+                title: 'Lỗi',
+                message: 'Có lỗi xảy ra khi thêm sản phẩm vào giỏ hàng'
+            });
         });
     });
 
@@ -311,12 +281,18 @@ document.addEventListener("DOMContentLoaded", function() {
                 // Redirect to checkout page
                 window.location.href = '/checkout';
             } else {
-                showToast(data.message || 'Có lỗi khi thêm sản phẩm vào giỏ hàng', 'error');
+                dtmodalShowToast('error', {
+                    title: 'Lỗi',
+                    message: data.message || 'Có lỗi khi thêm sản phẩm vào giỏ hàng'
+                });
             }
         })
         .catch(error => {
             console.error('Error:', error);
-            showToast('Có lỗi xảy ra khi thêm sản phẩm vào giỏ hàng', 'error');
+            dtmodalShowToast('error', {
+                title: 'Lỗi',
+                message: 'Có lỗi xảy ra khi thêm sản phẩm vào giỏ hàng'
+            });
         });
     });
     
@@ -353,7 +329,10 @@ document.addEventListener("DOMContentLoaded", function() {
             }, 2000);
             
             // Show toast notification
-            showToast(`Đã sao chép mã "${code}" vào clipboard`, 'success');
+            dtmodalShowToast('success', {
+                title: 'Đã sao chép',
+                message: `Mã "${code}" đã được sao chép vào clipboard`
+            });
         });
     });
 
@@ -365,39 +344,345 @@ document.addEventListener("DOMContentLoaded", function() {
     if (favoriteBtn) {
         favoriteBtn.addEventListener('click', function(e) {
             e.preventDefault();
+            // Nếu là nút login-prompt-btn thì show popup đăng nhập
+            if (this.classList.contains('login-prompt-btn')) {
+                document.getElementById('login-popup').classList.remove('hidden');
+                return;
+            }
             const productId = this.getAttribute('data-product-id');
             const icon = this.querySelector('i');
-            if (!productId || !icon) return;
-
-            fetch('/favorite/toggle', {
-                method: 'POST',
+            const isFavorite = icon.classList.contains('fas');
+            // Optimistic UI
+            if (isFavorite) {
+                icon.classList.remove('fas', 'text-red-500');
+                icon.classList.add('far');
+            } else {
+                icon.classList.remove('far');
+                icon.classList.add('fas', 'text-red-500');
+            }
+            // Gửi AJAX
+            fetch('/wishlist' + (isFavorite ? '/' + productId : ''), {
+                method: isFavorite ? 'DELETE' : 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'X-CSRF-TOKEN': window.csrfToken
                 },
-                body: JSON.stringify({ product_id: productId })
+                body: isFavorite ? null : JSON.stringify({ product_id: productId })
             })
-            .then(response => response.json())
+            .then(res => res.json())
             .then(data => {
-                if (data.success) {
-                    if (data.is_favorite) {
+                if (data && data.message) {
+                    // Thành công hoặc lỗi đều show message
+                    dtmodalShowToast(isFavorite ? 'info' : 'success', {
+                        title: isFavorite ? 'Thông báo' : 'Thành công',
+                        message: data.message
+                    });
+                } else {
+                    // Nếu lỗi, revert lại UI
+                    if (isFavorite) {
                         icon.classList.remove('far');
                         icon.classList.add('fas', 'text-red-500');
-                        showToast('Đã thêm vào yêu thích', 'success');
                     } else {
                         icon.classList.remove('fas', 'text-red-500');
                         icon.classList.add('far');
-                        showToast('Đã xóa khỏi yêu thích', 'info');
                     }
-                } else {
-                    showToast(data.message || 'Có lỗi xảy ra', 'error');
+                    dtmodalShowToast('error', {
+                        title: 'Lỗi',
+                        message: 'Có lỗi khi cập nhật yêu thích'
+                    });
                 }
             })
-            .catch(error => {
-                showToast('Có lỗi xảy ra khi cập nhật yêu thích', 'error');
+            .catch(() => {
+                // Nếu lỗi, revert lại UI
+                if (isFavorite) {
+                    icon.classList.remove('far');
+                    icon.classList.add('fas', 'text-red-500');
+                } else {
+                    icon.classList.remove('fas', 'text-red-500');
+                    icon.classList.add('far');
+                }
+                dtmodalShowToast('error', {
+                    title: 'Lỗi',
+                    message: 'Có lỗi khi cập nhật yêu thích'
+                });
             });
         });
     }
+
+    // XỬ LÝ CHỌN SỐ SAO NGUYÊN (1-5) VÀ MODAL THÔNG BÁO
+    const reviewForm = document.querySelector('form[action*="/review"]');
+    if (reviewForm) {
+        let selectedRating = 0;
+        const ratingInputs = reviewForm.querySelectorAll('input[name="rating"]');
+        const ratingLabels = reviewForm.querySelectorAll('label[for^="star"]');
+        function updateStarDisplay(rating) {
+            ratingLabels.forEach((label, idx) => {
+                if (idx < rating) {
+                    label.classList.add('text-yellow-400');
+                } else {
+                    label.classList.remove('text-yellow-400');
+                }
+            });
+        }
+        ratingInputs.forEach(input => { input.checked = false; });
+        updateStarDisplay(0);
+        ratingLabels.forEach((label, idx) => {
+            label.addEventListener('click', function(e) {
+                // Nếu click vào ngôi sao đã chọn thì bỏ chọn (rating = 0)
+                if (selectedRating === idx + 1) {
+                    selectedRating = 0;
+                    ratingInputs.forEach((input, i) => { input.checked = false; });
+                    updateStarDisplay(0);
+                } else {
+                    selectedRating = idx + 1;
+                    ratingInputs.forEach((input, i) => { input.checked = (i === idx); });
+                    updateStarDisplay(selectedRating);
+                }
+            });
+        });
+        reviewForm.addEventListener('submit', function(e) {
+            // Nếu là reply thì dùng AJAX, không reload trang
+            if (reviewForm.action.includes('/reply')) {
+                e.preventDefault();
+                const formData = new FormData(reviewForm);
+                const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+                const submitBtn = reviewForm.querySelector('button[type="submit"]');
+                submitBtn.disabled = true;
+                submitBtn.textContent = 'Đang gửi...';
+
+                fetch(reviewForm.action, {
+                    method: 'POST',
+                    headers: {
+                        'X-CSRF-TOKEN': csrfToken,
+                        'Accept': 'application/json',
+                    },
+                    body: formData
+                })
+                .then(async response => {
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = submitBtn.getAttribute('data-default-text') || 'Gửi đánh giá';
+                    if (response.ok) {
+                        dtmodalShowToast('success', { title: 'Thành công', message: 'Phản hồi thành công!' });
+                        setTimeout(() => {
+                            // Lấy lại DOM mỗi lần
+                            const reviewForm = document.getElementById('review-reply-form');
+                            const replyReviewIdInput = document.getElementById('reply_review_id');
+                            const replyingToDiv = document.getElementById('replying-to');
+                            const reviewTextarea = document.getElementById('review-textarea');
+                            const reviewSubmitBtn = document.getElementById('review-submit-btn');
+                            const formTitle = document.getElementById('form-title');
+                            const ratingRow = document.getElementById('rating-row');
+                            // Lấy lại giá trị mặc định từ data-attribute
+                            if (reviewForm) reviewForm.setAttribute('action', reviewForm.getAttribute('data-default-action') || '/products/review');
+                            if (replyReviewIdInput) replyReviewIdInput.value = '';
+                            if (replyingToDiv) replyingToDiv.classList.add('hidden');
+                            if (reviewTextarea) {
+                                reviewTextarea.value = '';
+                                reviewTextarea.placeholder = reviewTextarea.getAttribute('data-default-placeholder') || 'Chia sẻ cảm nhận của bạn...';
+                                reviewTextarea.setAttribute('name', 'review');
+                            }
+                            if (reviewSubmitBtn) reviewSubmitBtn.textContent = reviewSubmitBtn.getAttribute('data-default-text') || 'Gửi đánh giá';
+                            if (formTitle) formTitle.textContent = formTitle.getAttribute('data-default-title') || 'Gửi đánh giá của bạn';
+                            if (ratingRow) ratingRow.style.display = '';
+                            if (typeof selectedRating !== 'undefined') selectedRating = 0;
+                            if (typeof updateStarDisplay === 'function') updateStarDisplay(0);
+                            console.log('[DEBUG] Reset reply form to default UI (after realtime)');
+                        }, 200);
+                    } else {
+                        let errorMsg = 'Có lỗi xảy ra khi gửi phản hồi!';
+                        try {
+                            const data = await response.json();
+                            if (data && data.errors) {
+                                errorMsg = Object.values(data.errors).join('\n');
+                            } else if (data && data.message) {
+                                errorMsg = data.message;
+                            }
+                        } catch {}
+                        dtmodalShowToast('error', { title: 'Lỗi', message: errorMsg });
+                    }
+                    return;
+                })
+                .catch(() => {
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = submitBtn.getAttribute('data-default-text') || 'Gửi đánh giá';
+                    return;
+                });
+                return;
+            }
+            // Nếu là gửi bình luận mới (không phải reply), cũng dùng AJAX
+            e.preventDefault();
+            const formData = new FormData(reviewForm);
+            const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+            const submitBtn = reviewForm.querySelector('button[type="submit"]');
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Đang gửi...';
+            fetch(reviewForm.action, {
+                method: 'POST',
+                headers: {
+                    'X-CSRF-TOKEN': csrfToken,
+                    'Accept': 'application/json',
+                },
+                body: formData
+            })
+            .then(async response => {
+                submitBtn.disabled = false;
+                submitBtn.textContent = submitBtn.getAttribute('data-default-text') || 'Gửi đánh giá';
+                if (response.ok) {
+                    dtmodalShowToast('success', { title: 'Thành công', message: 'Đánh giá của bạn đã được gửi!' });
+                    setTimeout(() => {
+                        // Lấy lại DOM mỗi lần
+                        const reviewForm = document.getElementById('review-reply-form');
+                        const replyReviewIdInput = document.getElementById('reply_review_id');
+                        const replyingToDiv = document.getElementById('replying-to');
+                        const reviewTextarea = document.getElementById('review-textarea');
+                        const reviewSubmitBtn = document.getElementById('review-submit-btn');
+                        const formTitle = document.getElementById('form-title');
+                        const ratingRow = document.getElementById('rating-row');
+                        if (reviewForm) reviewForm.setAttribute('action', reviewForm.getAttribute('data-default-action') || '/products/review');
+                        if (replyReviewIdInput) replyReviewIdInput.value = '';
+                        if (replyingToDiv) replyingToDiv.classList.add('hidden');
+                        if (reviewTextarea) {
+                            reviewTextarea.value = '';
+                            reviewTextarea.placeholder = reviewTextarea.getAttribute('data-default-placeholder') || 'Chia sẻ cảm nhận của bạn...';
+                            reviewTextarea.setAttribute('name', 'review');
+                        }
+                        if (reviewSubmitBtn) reviewSubmitBtn.textContent = reviewSubmitBtn.getAttribute('data-default-text') || 'Gửi đánh giá';
+                        if (formTitle) formTitle.textContent = formTitle.getAttribute('data-default-title') || 'Gửi đánh giá của bạn';
+                        if (ratingRow) ratingRow.style.display = '';
+                        if (typeof selectedRating !== 'undefined') selectedRating = 0;
+                        if (typeof updateStarDisplay === 'function') updateStarDisplay(0);
+                        // Reset ảnh preview nếu có
+                        const preview = document.getElementById('preview_image');
+                        if (preview) { preview.src = '#'; preview.classList.add('hidden'); }
+                        // Reset checkbox ẩn danh
+                        const isAnonymous = document.getElementById('is_anonymous');
+                        if (isAnonymous) isAnonymous.checked = false;
+                        // Reset rating radio
+                        const ratingInputs = reviewForm.querySelectorAll('input[name="rating"]');
+                        ratingInputs.forEach(input => { input.checked = false; });
+                        console.log('[DEBUG] Reset review form to default UI (after review submit)');
+                    }, 200);
+                } else {
+                    let errorMsg = 'Có lỗi xảy ra khi gửi đánh giá!';
+                    try {
+                        const data = await response.json();
+                        if (data && data.errors) {
+                            errorMsg = Object.values(data.errors).join('\n');
+                        } else if (data && data.message) {
+                            errorMsg = data.message;
+                        }
+                    } catch {}
+                    dtmodalShowToast('error', { title: 'Lỗi', message: errorMsg });
+                }
+                return;
+            })
+            .catch(() => {
+                submitBtn.disabled = false;
+                submitBtn.textContent = submitBtn.getAttribute('data-default-text') || 'Gửi đánh giá';
+                dtmodalShowToast('error', { title: 'Lỗi', message: 'Có lỗi xảy ra khi gửi đánh giá!' });
+            });
+        });
+    }
+
+    // XỬ LÝ XÓA BÌNH LUẬN (REVIEW)
+    document.querySelectorAll('.delete-review-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const reviewId = this.getAttribute('data-review-id');
+            if (!confirm('Bạn có chắc chắn muốn xóa bình luận này?')) return;
+            const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+            fetch(`/reviews/${reviewId}`, {
+                method: 'DELETE',
+                headers: {
+                    'X-CSRF-TOKEN': csrfToken,
+                    'Accept': 'application/json',
+                },
+            })
+            .then(async res => {
+                if (res.ok) {
+                    dtmodalShowToast('success', { title: 'Thành công', message: 'Đã xóa bình luận!' });
+                    // Ẩn review khỏi giao diện
+                    const reviewDiv = btn.closest('.p-6');
+                    if (reviewDiv) reviewDiv.remove();
+                } else {
+                    let msg = 'Không thể xóa bình luận!';
+                    try {
+                        const data = await res.json();
+                        if (data && data.message) msg = data.message;
+                    } catch {}
+                    dtmodalShowToast('error', { title: 'Lỗi', message: msg });
+                }
+            })
+            .catch(() => {
+                dtmodalShowToast('error', { title: 'Lỗi', message: 'Lỗi mạng hoặc server!' });
+            });
+        });
+    });
+
+    // Preview image functionality
+    const input = document.getElementById('review_image');
+    const preview = document.getElementById('preview_image');
+    if (input && preview) {
+        input.addEventListener('change', function(e) {
+            if (input.files && input.files[0]) {
+                const reader = new FileReader();
+                reader.onload = function(ev) {
+                    preview.src = ev.target.result;
+                    preview.classList.remove('hidden');
+                }
+                reader.readAsDataURL(input.files[0]);
+            } else {
+                preview.src = '#';
+                preview.classList.add('hidden');
+            }
+        });
+    }
+
+    // XỬ LÝ XÓA REPLY (fetch API)
+    document.addEventListener('click', function(e) {
+        if (e.target.classList.contains('delete-reply-btn')) {
+            if (!confirm('Bạn có chắc chắn muốn xóa phản hồi này không?')) return;
+            const btn = e.target;
+            const replyId = btn.getAttribute('data-reply-id');
+            const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+            fetch('/review-replies/' + replyId, {
+                method: 'DELETE',
+                headers: {
+                    'X-CSRF-TOKEN': csrfToken,
+                    'Accept': 'application/json',
+                },
+                credentials: 'same-origin'
+            })
+            .then(async res => {
+                if (res.ok) {
+                    let data = await res.json();
+                    if (window.dtmodalShowToast) {
+                        dtmodalShowToast('success', { title: 'Thành công', message: data.message });
+                    } else {
+                        alert(data.message);
+                    }
+                    btn.closest('.reply-item').remove();
+                } else {
+                    let msg = 'Đã xảy ra lỗi!';
+                    try {
+                        const data = await res.json();
+                        if (data && data.message) msg = data.message;
+                    } catch {}
+                    if (window.dtmodalShowToast) {
+                        dtmodalShowToast('error', { title: 'Lỗi', message: msg });
+                    } else {
+                        alert(msg);
+                    }
+                }
+            })
+            .catch(() => {
+                if (window.dtmodalShowToast) {
+                    dtmodalShowToast('error', { title: 'Lỗi', message: 'Lỗi mạng hoặc server!' });
+                } else {
+                    alert('Lỗi mạng hoặc server!');
+                }
+            });
+        }
+    });
 });
 
 // Tab switching functionality
@@ -701,11 +986,11 @@ channel.bind('product-price-updated', function(data) {
     currentPriceDisplay.classList.add('animate-price-update');
     
     // Update base price display
-    basePriceDisplay.textContent = `${window.basePrice.toLocaleString('vi-VN')}đ`;
+    basePriceDisplay.textContent = `${Math.round(window.basePrice).toLocaleString('en-US')} đ`;
     basePriceDisplay.classList.remove('hidden');
     
     // Update current price display
-    currentPriceDisplay.textContent = `${window.basePrice.toLocaleString('vi-VN')}đ`;
+    currentPriceDisplay.textContent = `${Math.round(window.basePrice).toLocaleString('en-US')} đ`;
     currentPriceDisplay.classList.add('text-orange-500');
     currentPriceDisplay.classList.remove('text-green-500');
     
@@ -733,7 +1018,7 @@ channel.bind('product-price-updated', function(data) {
         if (productId == data.productId) {
             const priceElement = product.querySelector('.product-price');
             if (priceElement) {
-                priceElement.textContent = `${window.basePrice.toLocaleString('vi-VN')}đ`;
+                priceElement.textContent = `${Math.round(window.basePrice).toLocaleString('en-US')} đ`;
                 priceElement.classList.add('animate-price-update');
                 setTimeout(() => {
                     priceElement.classList.remove('animate-price-update');
@@ -768,20 +1053,15 @@ channel.bind('variant-price-updated', function(data) {
         const priceSpan = label.querySelector('span[class*="text-red-600"], span[class*="text-green-600"]');
         if (priceSpan) {
             if (data.newPriceAdjustment > 0) {
-                priceSpan.textContent = `+${parseFloat(data.newPriceAdjustment).toLocaleString('vi-VN')}đ`;
-                priceSpan.className = 'text-sm ml-1 text-red-600';
-            } else if (data.newPriceAdjustment < 0) {
-                priceSpan.textContent = `${parseFloat(data.newPriceAdjustment).toLocaleString('vi-VN')}đ`;
-                priceSpan.className = 'text-sm ml-1 text-green-600';
+                priceSpan.textContent = `+${Math.round(parseFloat(data.newPriceAdjustment)).toLocaleString('en-US')} đ`;
             } else {
-                // Remove price span if adjustment is 0
-                priceSpan.remove();
+                priceSpan.textContent = `${Math.round(parseFloat(data.newPriceAdjustment)).toLocaleString('en-US')} đ`;
             }
         } else if (data.newPriceAdjustment !== 0) {
             // Create new price span if it doesn't exist
             const newPriceSpan = document.createElement('span');
             newPriceSpan.className = `text-sm ml-1 ${data.newPriceAdjustment > 0 ? 'text-red-600' : 'text-green-600'}`;
-            newPriceSpan.textContent = `${data.newPriceAdjustment > 0 ? '+' : ''}${parseFloat(data.newPriceAdjustment).toLocaleString('vi-VN')}đ`;
+            newPriceSpan.textContent = `${data.newPriceAdjustment > 0 ? '+' : ''}${Math.round(parseFloat(data.newPriceAdjustment)).toLocaleString('en-US')} đ`;
             label.appendChild(newPriceSpan);
         }
         
@@ -826,8 +1106,7 @@ channel.bind('variant-price-updated', function(data) {
                     const label = input.nextElementSibling;
                     const priceSpan = label.querySelector('span[class*="text-red-600"], span[class*="text-green-600"]');
                     if (priceSpan && data.newPriceAdjustment !== 0) {
-                        priceSpan.textContent = `${data.newPriceAdjustment > 0 ? '+' : ''}${parseFloat(data.newPriceAdjustment).toLocaleString('vi-VN')}đ`;
-                        priceSpan.className = `text-sm ml-1 ${data.newPriceAdjustment > 0 ? 'text-red-600' : 'text-green-600'}`;
+                        priceSpan.textContent = `${data.newPriceAdjustment > 0 ? '+' : ''}${Math.round(parseFloat(data.newPriceAdjustment)).toLocaleString('en-US')} đ`;
                     }
                 }
             });
@@ -860,7 +1139,7 @@ channel.bind('topping-price-updated', function(data) {
             // Update the price display
             const priceElement = label.querySelector('.text-xs.text-orange-500.font-medium');
             if (priceElement) {
-                priceElement.textContent = `+${parseFloat(data.newPrice).toLocaleString('vi-VN')}đ`;
+                priceElement.textContent = `+${Math.round(parseFloat(data.newPrice)).toLocaleString('en-US')} đ`;
                 
                 // Add animation to the price element
                 priceElement.classList.add('topping-price-updated');
@@ -902,7 +1181,7 @@ channel.bind('topping-price-updated', function(data) {
                 const label = input.closest('label');
                 const priceElement = label.querySelector('.text-xs.text-orange-500.font-medium');
                 if (priceElement) {
-                    priceElement.textContent = `+${parseFloat(data.newPrice).toLocaleString('vi-VN')}đ`;
+                    priceElement.textContent = `+${Math.round(parseFloat(data.newPrice)).toLocaleString('en-US')} đ`;
                 }
             }
         });
@@ -1201,7 +1480,7 @@ function createVariantOption(variantValue, variantId) {
     if (variantValue.price_adjustment !== 0) {
         const priceSpan = document.createElement('span');
         priceSpan.className = `text-sm ml-1 ${variantValue.price_adjustment > 0 ? 'text-red-600' : 'text-green-600'}`;
-        priceSpan.textContent = `${variantValue.price_adjustment > 0 ? '+' : ''}${parseFloat(variantValue.price_adjustment).toLocaleString('vi-VN')}đ`;
+        priceSpan.textContent = `${variantValue.price_adjustment > 0 ? '+' : ''}${Math.round(parseFloat(variantValue.price_adjustment)).toLocaleString('en-US')} đ`;
         span.appendChild(priceSpan);
         console.log('Added price span:', priceSpan.textContent);
     }
@@ -1240,12 +1519,11 @@ function updateVariantPriceDisplay(label, priceAdjustment) {
     
     if (priceAdjustment !== 0) {
         if (priceSpan) {
-            priceSpan.textContent = `${priceAdjustment > 0 ? '+' : ''}${parseFloat(priceAdjustment).toLocaleString('vi-VN')}đ`;
-            priceSpan.className = `text-sm ml-1 ${priceAdjustment > 0 ? 'text-red-600' : 'text-green-600'}`;
+            priceSpan.textContent = `${priceAdjustment > 0 ? '+' : ''}${Math.round(parseFloat(priceAdjustment)).toLocaleString('en-US')} đ`;
         } else {
             priceSpan = document.createElement('span');
             priceSpan.className = `text-sm ml-1 ${priceAdjustment > 0 ? 'text-red-600' : 'text-green-600'}`;
-            priceSpan.textContent = `${priceAdjustment > 0 ? '+' : ''}${parseFloat(priceAdjustment).toLocaleString('vi-VN')}đ`;
+            priceSpan.textContent = `${priceAdjustment > 0 ? '+' : ''}${Math.round(parseFloat(priceAdjustment)).toLocaleString('en-US')} đ`;
             label.appendChild(priceSpan);
         }
     } else if (priceSpan) {
@@ -1282,7 +1560,14 @@ function showVariantNotification(message, type) {
             notification.classList.add('hidden');
         }, 5000);
     }
+    
+    // Also show modal toast for better user experience
+    dtmodalShowToast(type, {
+        title: type === 'success' ? 'Thành công' : type === 'warning' ? 'Cảnh báo' : 'Thông báo',
+        message: message
+    });
 }
+
 
 // Initialize Pusher for discount realtime
 const discountsPusher = new Pusher(window.pusherKey, {
@@ -1298,3 +1583,290 @@ discountsChannel.bind('discount-updated', function(data) {
         window.location.reload();
     }, 1000);
 });
+
+// Thêm CSS hiệu ứng nửa sao vào cuối file (nếu chưa có)
+(function() {
+    if (!document.getElementById('star-half-style')) {
+        const style = document.createElement('style');
+        style.id = 'star-half-style';
+        style.innerHTML = `
+        .star-half i.fas.fa-star-half-alt {
+            position: relative;
+        }
+        .star-half i.fas.fa-star-half-alt:before {
+            content: '\f089'; /* FontAwesome fa-star-half-alt */
+            position: absolute;
+            left: 0;
+            width: 50%;
+            overflow: hidden;
+            color: #facc15; /* yellow-400 */
+        }
+        .star-half i.fas.fa-star-half-alt {
+            color: #facc15;
+        }
+        `;
+        document.head.appendChild(style);
+    }
+})();
+
+// === Reply review UX ===
+document.addEventListener('DOMContentLoaded', function() {
+    const reviewForm = document.getElementById('review-reply-form');
+    const replyReviewIdInput = document.getElementById('reply_review_id');
+    const replyingToDiv = document.getElementById('replying-to');
+    const replyingToUser = document.getElementById('replying-to-user');
+    const cancelReplyBtn = document.getElementById('cancel-reply');
+    const reviewTextarea = document.getElementById('review-textarea');
+    const reviewSubmitBtn = document.getElementById('review-submit-btn');
+    const formTitle = document.getElementById('form-title');
+    const ratingRow = document.getElementById('rating-row');
+    // Lưu mặc định ngay khi DOM load
+    const defaultAction = reviewForm ? reviewForm.getAttribute('action') : '';
+    const defaultPlaceholder = reviewTextarea ? reviewTextarea.getAttribute('placeholder') : '';
+    const defaultBtnText = reviewSubmitBtn ? reviewSubmitBtn.textContent : '';
+    const defaultTitle = formTitle ? formTitle.textContent : '';
+    // Gắn sự kiện cho nút reply ở mỗi review
+    document.querySelectorAll('.reply-review-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const reviewId = this.getAttribute('data-review-id');
+            const userName = this.getAttribute('data-user-name');
+            const routeReply = this.getAttribute('data-route-reply');
+            console.log('[Reply] Clicked reply for reviewId:', reviewId, 'userName:', userName, 'routeReply:', routeReply);
+            if (reviewForm) {
+                reviewForm.setAttribute('action', routeReply);
+                replyReviewIdInput.value = reviewId;
+                replyingToUser.textContent = userName;
+                replyingToDiv.classList.remove('hidden');
+                reviewTextarea.placeholder = `Phản hồi cho ${userName}...`;
+                reviewSubmitBtn.textContent = 'Gửi phản hồi';
+                formTitle.textContent = 'Gửi phản hồi';
+                reviewTextarea.focus();
+                if (ratingRow) ratingRow.style.display = 'none';
+                console.log('[Reply] Form action set to:', reviewForm.getAttribute('action'));
+            }
+            reviewTextarea.setAttribute('name', 'reply');
+        });
+    });
+    // Hủy reply, trở lại form đánh giá
+    if (cancelReplyBtn) {
+        cancelReplyBtn.addEventListener('click', function() {
+            if (reviewForm) {
+                reviewForm.setAttribute('action', defaultAction);
+                replyReviewIdInput.value = '';
+                replyingToDiv.classList.add('hidden');
+                reviewTextarea.placeholder = defaultPlaceholder;
+                reviewSubmitBtn.textContent = defaultBtnText;
+                formTitle.textContent = defaultTitle;
+                if (ratingRow) ratingRow.style.display = '';
+                console.log('[Reply] Cancel reply, form action reset to:', reviewForm.getAttribute('action'));
+            }
+            reviewTextarea.setAttribute('name', 'review');
+        });
+    }
+    // Debug submit
+    if (reviewForm) {
+        reviewForm.addEventListener('submit', function(e) {
+            console.log('[Submit] Form action:', reviewForm.action, 'selectedRating:', typeof selectedRating !== 'undefined' ? selectedRating : 'N/A');
+        });
+    }
+});
+
+// === Realtime reply (Pusher) ===
+const reviewRepliesPusher = new Pusher(window.pusherKey, {
+    cluster: window.pusherCluster,
+    encrypted: true,
+    enabledTransports: ['ws', 'wss']
+});
+const reviewRepliesChannel = reviewRepliesPusher.subscribe('review-replies');
+reviewRepliesChannel.bind('review-reply-created', function(data) {
+    console.log('[Realtime] Nhận reply mới:', data);
+    const reviewBlock = document.querySelector(`[data-review-id="${data.review_id}"]`);
+    if (!reviewBlock) return;
+    // Kiểm tra quyền xóa
+    const canDelete = (window.currentUserId && (window.currentUserId == data.user_id || window.isAdmin === true));
+    const deleteBtnHtml = canDelete
+        ? `<button class="inline-flex items-center gap-1 text-xs text-red-500 hover:text-red-700 transition-colors delete-reply-btn" data-reply-id="${data.reply_id}">
+                <i class="fas fa-trash-alt"></i> Xóa
+           </button>`
+        : '';
+    // Tạo HTML cho reply mới (format date, có nút xóa nếu đúng quyền)
+    const replyHtml = `
+        <div class="reply-item flex items-start gap-2 ml-8 mt-2 relative">
+            <div class="reply-arrow">
+                <svg width="24" height="24" viewBox="0 0 24 24" class="text-blue-400"><path d="M2 12h16M18 12l-4-4m4 4l-4 4" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <div class="bg-blue-50 border border-blue-200 rounded-lg px-4 py-2 flex-1">
+                <div class="flex items-center gap-2 mb-1">
+                    <span class="font-semibold text-blue-700">${data.user_name || 'Ẩn danh'}</span>
+                    <span class="text-xs text-gray-400">${formatDate(data.reply_date)}</span>
+                    ${deleteBtnHtml}
+                </div>
+                <div class="text-gray-700">${data.reply_content}</div>
+            </div>
+        </div>
+    `;
+    // Chèn vào cuối danh sách reply của review này
+    let lastReply = null;
+    let sibling = reviewBlock.nextElementSibling;
+    while (sibling && sibling.classList.contains('reply-item')) {
+        lastReply = sibling;
+        sibling = sibling.nextElementSibling;
+    }
+    let newReplyElem;
+    if (lastReply) {
+        lastReply.insertAdjacentHTML('afterend', replyHtml);
+        newReplyElem = lastReply.nextElementSibling;
+    } else {
+        // Nếu chưa có reply nào, chèn ngay sau reviewBlock
+        reviewBlock.insertAdjacentHTML('afterend', replyHtml);
+        newReplyElem = reviewBlock.nextElementSibling;
+    }
+    // Không highlight nữa, chỉ scroll tới reply mới nếu muốn
+    if (newReplyElem) {
+        newReplyElem.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+});
+
+// XÓA CSS hiệu ứng highlight nếu có
+(function() {
+    const style = document.getElementById('reply-highlight-style');
+    if (style) style.remove();
+})();
+
+// Format date helper
+function formatDate(dateStr) {
+    const d = new Date(dateStr);
+    if (isNaN(d)) return dateStr;
+    const pad = n => n < 10 ? '0' + n : n;
+    return `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// Listen for review-reply-deleted event
+reviewRepliesChannel.bind('review-reply-deleted', function(data) {
+    console.log('[Realtime] Xóa reply:', data);
+    // Tìm reply-item theo data-reply-id
+    const replyElem = document.querySelector(`.reply-item[data-reply-id="${data.reply_id}"]`);
+    if (replyElem) {
+        replyElem.remove();
+    }
+});
+
+// === Realtime xóa bình luận (review) ===
+const reviewEventsPusher = new Pusher(window.pusherKey, {
+    cluster: window.pusherCluster,
+    encrypted: true,
+    enabledTransports: ['ws', 'wss']
+});
+const reviewEventsChannel = reviewEventsPusher.subscribe('review-events');
+reviewEventsChannel.bind('review-deleted', function(data) {
+    console.log('[Realtime] Xóa bình luận:', data);
+    // Tìm review block theo data-review-id
+    const reviewElem = document.querySelector(`[data-review-id="${data.review_id}"]`);
+    if (reviewElem) {
+        // Xóa cả các reply-item liên tiếp phía sau (nếu có)
+        let sibling = reviewElem.nextElementSibling;
+        while (sibling && sibling.classList.contains('reply-item')) {
+            const toRemove = sibling;
+            sibling = sibling.nextElementSibling;
+            toRemove.remove();
+        }
+        reviewElem.remove();
+    }
+});
+
+// === Hữu ích (AJAX + realtime) ===
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('.helpful-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const reviewId = this.getAttribute('data-review-id');
+            const countSpan = this.querySelector('.helpful-count');
+            const button = this;
+            const icon = button.querySelector('i');
+            const isHelpful = button.getAttribute('data-helpful') === '1';
+            if (!isHelpful) {
+                // Mark helpful (POST)
+                fetch(`/reviews/${reviewId}/helpful`, {
+                    method: 'POST',
+                    headers: {
+                        'X-CSRF-TOKEN': window.csrfToken,
+                        'Accept': 'application/json',
+                    },
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.success) {
+                        countSpan.textContent = data.helpful_count;
+                        button.classList.add('helpful-active', 'text-sky-600');
+                        icon.classList.add('text-sky-600');
+                        icon.classList.remove('far');
+                        icon.classList.add('fas');
+                        button.setAttribute('data-helpful', '1');
+                    }
+                });
+            } else {
+                // Unmark helpful (DELETE)
+                fetch(`/reviews/${reviewId}/helpful`, {
+                    method: 'DELETE',
+                    headers: {
+                        'X-CSRF-TOKEN': window.csrfToken,
+                        'Accept': 'application/json',
+                    },
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.success) {
+                        countSpan.textContent = data.helpful_count;
+                        button.classList.remove('helpful-active', 'text-sky-600');
+                        icon.classList.remove('text-sky-600');
+                        icon.classList.remove('fas');
+                        icon.classList.add('far');
+                        button.setAttribute('data-helpful', '0');
+                    }
+                });
+            }
+        });
+    });
+});
+
+// Lắng nghe realtime cập nhật số hữu ích và trạng thái nút
+const helpfulPusher = new Pusher(window.pusherKey, {
+    cluster: window.pusherCluster,
+    encrypted: true,
+    enabledTransports: ['ws', 'wss']
+});
+const helpfulChannel = helpfulPusher.subscribe('review-helpful');
+helpfulChannel.bind('review-helpful-updated', function(data) {
+    const btn = document.querySelector(`.helpful-btn[data-review-id="${data.review_id}"]`);
+    if (btn) {
+        const countSpan = btn.querySelector('.helpful-count');
+        if (countSpan) countSpan.textContent = data.helpful_count;
+        // Đã bỏ fetch API kiểm tra trạng thái, chỉ cập nhật số
+    }
+});
+
+// === Wishlist realtime (Pusher) ===
+if (window.currentUserId) {
+    const wishlistPusher = new Pusher(window.pusherKey, {
+        cluster: window.pusherCluster,
+        encrypted: true,
+        enabledTransports: ['ws', 'wss']
+    });
+    const wishlistChannel = wishlistPusher.subscribe('private-user-wishlist-channel.' + window.currentUserId);
+    wishlistChannel.bind('wishlist-updated', function(data) {
+        // Cập nhật UI icon yêu thích ở đây
+        const favoriteBtn = document.querySelector('.favorite-btn');
+        if (favoriteBtn) {
+            const icon = favoriteBtn.querySelector('i');
+            if (data.product_id == window.productId) {
+                if (data.action === 'added') {
+                    icon.classList.remove('far');
+                    icon.classList.add('fas', 'text-red-500');
+                } else if (data.action === 'removed') {
+                    icon.classList.remove('fas', 'text-red-500');
+                    icon.classList.add('far');
+                }
+            }
+        }
+    });
+    console.log('Subscribed to wishlist channel: private-user-wishlist-channel.' + window.currentUserId);
+}

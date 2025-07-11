@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Carbon\Carbon;
 
 class Order extends Model
 {
@@ -113,6 +114,11 @@ class Order extends Model
         return $this->hasMany(OrderItem::class);
     }
 
+    public function items()
+    {
+        return $this->hasMany(OrderItem::class);
+    }
+
     /**
      * Get the reviews for the order.
      */
@@ -121,84 +127,62 @@ class Order extends Model
         return $this->hasMany(ProductReview::class);
     }
 
+
     /**
-     * Get the customer name (either from User or guest_name)
+     * The accessors to append to the model's array form.
+     * Thuộc tính này yêu cầu Laravel luôn đính kèm các giá trị từ Accessor
+     * vào kết quả JSON, giải quyết lỗi "reading 'bg'".
+     *
+     * @var array
      */
-    private static array $statusAttributes = [
-        'pending' => [
-            'text' => 'Chờ nhận',
-            'color' => '#f59e0b', // amber-500
-            'icon' => 'fas fa-receipt',
-        ],
-        'processing' => [
-            'text' => 'Đang chuẩn bị',
-            'color' => '#3B82F6', // blue-500
-            'icon' => 'fas fa-box',
-        ],
-        'delivering' => [
-            'text' => 'Đang giao',
-            'color' => '#EA580C', // orange-600
-            'icon' => 'fas fa-truck',
-        ],
-        'shipping' => [
-            'text' => 'Đang giao',
-            'color' => '#8B5CF6', // violet-500
-            'icon' => 'fas fa-shipping-fast',
-        ],
-        'delivered' => [
-            'text' => 'Đã giao',
-            'color' => '#16A34A', // green-600
-            'icon' => 'fas fa-check-circle',
-        ],
-        'cancelled' => [
-            'text' => 'Đã hủy',
-            'color' => '#DC2626', // red-600
-            'icon' => 'fas fa-times-circle',
-        ],
-        'default' => [
-            'text' => 'Không xác định',
-            'color' => '#6B7280', // gray-500
-            'icon' => 'fas fa-question-circle',
-        ],
+    protected $appends = [
+        'status_text',
+        'status_color',
+        'status_text_color',
+        'status_icon',
+        'customer_name',
+        'customer_phone'
     ];
 
     /**
-     * Lấy text trạng thái Tiếng Việt.
+     * Get the status history for the order.
      */
-    protected function statusText(): Attribute
+    public function statusHistory()
     {
-        return Attribute::make(
-            get: fn () => self::$statusAttributes[$this->status]['text'] ?? self::$statusAttributes['default']['text'],
-        );
+        return $this->hasMany(OrderStatusHistory::class);
     }
 
     /**
-     * Lấy MÀU HEX (string) cho từng trạng thái.
+     * Get the cancellation information for the order.
      */
-    protected function statusColor(): Attribute
+    public function cancellation()
     {
-        return Attribute::make(
-            get: fn () => self::$statusAttributes[$this->status]['color'] ?? self::$statusAttributes['default']['color'],
-        );
+        return $this->hasOne(OrderCancellation::class);
     }
 
     /**
-     * Lấy class ICON (string) cho từng trạng thái.
+     * Check if order is cancelled
      */
-    protected function statusIcon(): Attribute
+    public function isCancelled()
     {
-        return Attribute::make(
-            get: fn () => self::$statusAttributes[$this->status]['icon'] ?? self::$statusAttributes['default']['icon'],
-        );
+        return $this->status === 'cancelled';
     }
 
     /**
-     * Lấy tên khách hàng (từ User hoặc guest_name)
+     * Check if order has cancellation record
+     */
+    public function hasCancellation()
+    {
+        return $this->cancellation()->exists();
+    }
+
+    /**
+     * Get the customer name (either from User or guest_name)
      */
     protected function customerName(): Attribute
     {
         return Attribute::make(
-            get: fn () => $this->customer->full_name ?? $this->guest_name ?? 'Khách vãng lai',
+            get: fn() => $this->customer->full_name ?? $this->guest_name ?? 'Khách vãng lai',
         );
     }
 
@@ -208,15 +192,79 @@ class Order extends Model
     protected function customerPhone(): Attribute
     {
         return Attribute::make(
-            get: fn () => $this->customer->phone ?? $this->guest_phone ?? 'Không có',
+            get: fn() => $this->customer->phone ?? $this->guest_phone ?? 'Không có',
+        );
+    }
+
+    // --- CẬP NHẬT TẠI ĐÂY ---
+
+    // Định nghĩa tĩnh các thuộc tính trạng thái
+    private static array $statusAttributes = [
+        'awaiting_confirmation' => ['text' => 'Chờ xác nhận', 'bg' => '#fcd34d', 'text_color' => '#FFFFFF', 'icon' => 'fas fa-hourglass-half'], // Vàng nhạt -> Cam đậm
+        'awaiting_driver' => ['text' => 'Chờ tài xế', 'bg' => '#f97316', 'text_color' => '#FFFFFF', 'icon' => 'fas fa-user-clock'],       // Cam -> Nâu đỏ
+        'driver_assigned' => ['text' => 'Tài xế đã được giao', 'bg' => '#60a5fa', 'text_color' => '#FFFFFF', 'icon' => 'fas fa-clipboard-check'], // Xanh dương nhạt -> Xanh dương đậm
+        'driver_confirmed' => ['text' => 'Tài xế đã xác nhận', 'bg' => '#3b82f6', 'text_color' => '#FFFFFF', 'icon' => 'fas fa-check-circle'], // Xanh dương trung bình -> Xanh đậm
+        'driver_picked_up' => ['text' => 'Đã nhận đơn', 'bg' => '#a78bfa', 'text_color' => '#FFFFFF', 'icon' => 'fas fa-shopping-bag'],     // Tím nhạt -> Tím đậm
+        'in_transit' => ['text' => 'Đang giao', 'bg' => '#2dd4bf', 'text_color' => '#FFFFFF', 'icon' => 'fas fa-truck'],               // Xanh ngọc lam -> Xanh lá cây đậm
+        'delivered' => ['text' => 'Đã giao', 'bg' => '#4ade80', 'text_color' => '#FFFFFF', 'icon' => 'fas fa-check-double'],            // Xanh lá cây nhạt -> Xanh lá cây đậm hơn
+        'item_received' => ['text' => 'Khách đã nhận hàng', 'bg' => '#22c55e', 'text_color' => '#FFFFFF', 'icon' => 'fas fa-home'],      // Xanh lá cây tươi -> Xanh lá cây rất đậm
+        'cancelled' => ['text' => 'Đã hủy', 'bg' => '#f87171', 'text_color' => '#FFFFFF', 'icon' => 'fas fa-times-circle'],             // Đỏ nhạt -> Đỏ đậm
+        'refunded' => ['text' => 'Đã hoàn tiền', 'bg' => '#a5b4fc', 'text_color' => '#FFFFFF', 'icon' => 'fas fa-undo-alt'],          // Tím xanh nhạt -> Xanh tím đậm
+        'payment_failed' => ['text' => 'Thanh toán thất bại', 'bg' => '#ef4444', 'text_color' => '#FFFFFF', 'icon' => 'fas fa-exclamation-triangle'], // Đỏ -> Đỏ sẫm
+        'payment_received' => ['text' => 'Thanh toán đã nhận', 'bg' => '#84cc16', 'text_color' => '#FFFFFF', 'icon' => 'fas fa-money-check-alt'], // Xanh lá cây tươi -> Xanh lá cây đậm
+        'order_failed' => ['text' => 'Đơn hàng đã thất bại', 'bg' => '#dc2626', 'text_color' => '#FFFFFF', 'icon' => 'fas fa-times-circle'],     // Đỏ đậm -> Đỏ sẫm hơn
+        'default' => ['text' => 'Không xác định', 'bg' => '#e5e7eb', 'text_color' => '#FFFFFF', 'icon' => 'fas fa-question-circle'], // Xám nhạt -> Xám đậm
+    ];
+
+    /**
+     * Lấy text trạng thái Tiếng Việt.
+     */
+    protected function statusText(): Attribute
+    {
+        return Attribute::make(
+            get: fn() => static::$statusAttributes[$this->status]['text'] ?? static::$statusAttributes['default']['text'],
         );
     }
 
     /**
-    * Lấy text trạng thái tĩnh cho các tab
-    */
-    public static function getStatusText(string $status): string
+     * Lấy MÀU HEX (string) cho từng trạng thái.
+     * Lưu ý: Phương thức này hiện chỉ trả về màu nền (bg).
+     * Nếu bạn cần màu chữ riêng, bạn sẽ cần truy cập $order->status_color['text'] trong Blade.
+     */
+    protected function statusColor(): Attribute
     {
-        return self::$statusAttributes[$status]['text'] ?? ucfirst($status);
+        return Attribute::make(
+            get: fn() => static::$statusAttributes[$this->status]['bg'] ?? static::$statusAttributes['default']['bg'],
+        );
+    }
+
+    /**
+     * Lấy class ICON (string) cho từng trạng thái.
+     */
+    protected function statusIcon(): Attribute
+    {
+        return Attribute::make(
+            get: fn() => static::$statusAttributes[$this->status]['icon'] ?? static::$statusAttributes['default']['icon'],
+        );
+    }
+
+    /**
+     * Lấy text trạng thái tĩnh cho các tab (nếu cần dùng bên ngoài instance của Order)
+     */
+    public static function getStatusTextStatic(string $status): string
+    {
+        return static::$statusAttributes[$status]['text'] ?? static::$statusAttributes['default']['text'];
+    }
+
+    public static function getStatusIconStatic(string $status): string
+    {
+        return static::$statusAttributes[$status]['icon'] ?? static::$statusAttributes['default']['icon'];
+    }
+
+    protected function statusTextColor(): Attribute
+    {
+        return Attribute::make(
+            get: fn() => static::$statusAttributes[$this->status]['text_color'] ?? static::$statusAttributes['default']['text_color'],
+        );
     }
 }

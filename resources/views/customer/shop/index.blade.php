@@ -15,12 +15,17 @@
         });
     </script>
 @endif
+@if(Auth::check() || true)
+    <script>
+        window.csrfToken = '{{ csrf_token() }}';
+    </script>
+@endif
 <style>
     .container {
       max-width: 1280px;
       margin: 0 auto;
     }
-    
+
     /* CSS cho badge */
     .custom-badge {
         position: absolute;
@@ -32,12 +37,12 @@
         font-weight: 600;
         z-index: 10;
     }
-    
+
     .badge-sale {
         background-color: #FF3B30;
         color: white;
     }
-    
+
     .badge-new {
         background-color: #34C759;
         color: white;
@@ -45,7 +50,7 @@
         font-size: 10px;
         z-index: 10;
     }
-    
+
     /* Discount code styles */
     .discount-tag {
         margin-top: 8px;
@@ -53,7 +58,7 @@
         flex-wrap: wrap;
         gap: 4px;
     }
-    
+
     .discount-badge, .quality {
         display: inline-flex;
         align-items: center;
@@ -76,20 +81,20 @@
         margin-bottom: 2px;
         border: solid 1px #F97316;
     }
-    
+
     .discount-badge i {
         margin-right: 3px;
         font-size: 9px;
     }
-    
+
     .discount-badge.percentage {
         background-color: #F97316;
     }
-    
+
     .discount-badge.fixed-amount {
         background-color: #8B5CF6;
     }
-    
+
     .discount-badge.free-shipping {
         background-color: #0EA5E9;
     }
@@ -100,7 +105,7 @@
         transform: scale(0.8);
         transition: opacity 0.5s ease, transform 0.5s ease;
     }
-    
+
     .discount-badge.fade-in {
         opacity: 1;
         transform: scale(1);
@@ -112,7 +117,7 @@
         border: 1px solid #E5E7EB;
         transition: all 0.3s ease;
     }
-    
+
     .product-card:hover {
         box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
         transform: translateY(-2px);
@@ -213,7 +218,7 @@
         font-size: 0.875rem;
         font-weight: 500;
     }
-    
+
     /* Pagination custom styles */
     .pagination-container {
         display: flex;
@@ -281,7 +286,7 @@
         opacity: 0.7;
         pointer-events: none;
     }
-    
+
     .add-to-cart-btn.disabled:hover {
         background-color: #9CA3AF !important;
     }
@@ -300,7 +305,7 @@
 
 <div class="container mx-auto px-4 py-12">
 
-    
+
     <!-- Bộ lọc và tìm kiếm -->
     <div class="mb-8">
         <div class="flex flex-col md:flex-row justify-between items-center gap-4 mb-6">
@@ -313,7 +318,7 @@
                     <i class="fas fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"></i>
                 </form>
             </div>
-            
+
             <div class="flex items-center gap-2 w-full md:w-auto">
                 <span class="text-gray-600">Sắp xếp theo:</span>
                 <form action="{{ route('products.index') }}" method="GET" id="sort-form" class="m-0">
@@ -329,27 +334,27 @@
                 </form>
             </div>
         </div>
-        
+
         <div class="flex flex-wrap gap-2">
-            <a href="{{ route('products.index', array_merge(request()->except('category'), ['category' => ''])) }}" 
+            <a href="{{ route('products.index', array_merge(request()->except('category'), ['category' => ''])) }}"
                class="category-btn px-4 py-2 {{ !request('category') ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-700' }} rounded-full hover:bg-orange-600 hover:text-white transition-colors">
                 Tất cả
             </a>
             @foreach($categories as $category)
-                <a href="{{ route('products.index', array_merge(request()->except('category'), ['category' => $category->id])) }}" 
+                <a href="{{ route('products.index', array_merge(request()->except('category'), ['category' => $category->id])) }}"
                    class="category-btn px-4 py-2 {{ request('category') == $category->id ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-700' }} rounded-full hover:bg-orange-600 hover:text-white transition-colors">
                     {{ $category->name }}
                 </a>
             @endforeach
         </div>
     </div>
-    
 
-    
+
+
     <!-- Danh sách sản phẩm -->
     <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-6">
         @forelse($products as $product)
-            <div class="product-card bg-white rounded-lg overflow-hidden" 
+            <div class="product-card bg-white rounded-lg overflow-hidden"
                 data-product-id="{{ $product->id }}"
                 data-variants="{{ json_encode($product->variants->map(function($variant) {
                     return [
@@ -362,8 +367,8 @@
                 <div class="relative">
                     <a href="{{ route('products.show', $product->id) }}" class="block">
                         @if($product->primary_image)
-                            <img src="{{ $product->primary_image->s3_url }}" 
-                                 alt="{{ $product->name }}" 
+                            <img src="{{ Storage::disk('s3')->url($product->primary_image->img) }}"
+                                 alt="{{ $product->name }}"
                                  class="product-image">
                         @else
                             <div class="no-image-placeholder">
@@ -394,7 +399,7 @@
                     @elseif($product->created_at->diffInDays(now()) <= 7)
                         <span class="custom-badge badge-new">Mới</span>
                     @endif
-                    
+
 
                 </div>
 
@@ -506,8 +511,8 @@
                         @endif
                     </div>
 
-                    <div class="flex justify-start items-center">
-                        <div class="flex items-center mr-4">
+                    <div class="flex justify-between items-center">
+                        <div class="flex items-center">
                             <i class="fas fa-star text-yellow-400 text-xs"></i>
                             <span class="commons rating-count ml-1">{{ $product->reviews_count }}</span>
                         </div>
@@ -539,7 +544,7 @@
             </div>
         @endforelse
     </div>
-    
+
     <!-- Phân trang -->
     <div class="pagination-container">
         @if ($products->hasPages())
@@ -616,3 +621,4 @@
 @include('partials.customer.branch-check')
 <!-- Branch Selector Modal -->
 @endsection
+@include('components.modal')

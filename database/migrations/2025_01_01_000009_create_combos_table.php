@@ -16,9 +16,11 @@ return new class extends Migration
             $table->string('sku')->unique();
             $table->string('name');
             $table->string('image')->nullable();
-
+            $table->foreignId('category_id')->constrained('categories')->onDelete('restrict');
             $table->text('description')->nullable();
+            $table->decimal('original_price', 12, 2); // Giá gốc của combo
             $table->decimal('price', 12, 2); // Giá combo ưu đãi
+            $table->string('status')->default('selling'); // Trạng thái: selling, coming_soon, discontinued
             $table->boolean('active')->default(true);
             $table->foreignId('created_by')->nullable()->constrained('users')->onDelete('set null');
             $table->foreignId('updated_by')->nullable()->constrained('users')->onDelete('set null');
@@ -34,6 +36,7 @@ return new class extends Migration
 
             $table->unique(['combo_id', 'product_variant_id']);
         });
+
     }
 
     /**

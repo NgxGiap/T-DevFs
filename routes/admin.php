@@ -1,6 +1,6 @@
 <?php
 
-use App\Http\Controllers\Branch\BranchChatController;
+
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Broadcast;
 
@@ -18,7 +18,8 @@ use App\Http\Controllers\Admin\CategoryController;
 use App\Http\Controllers\Admin\DriverController;
 use App\Http\Controllers\Admin\RoleController;
 use App\Http\Controllers\Admin\PromotionProgramController;
-use App\Http\Controllers\Admin\ChatController as AdminChatController;
+use App\Http\Controllers\Admin\NotificationController;
+
 use App\Http\Controllers\Admin\User\UserController as UserUserController;
 use App\Http\Controllers\Admin\ProductVariantController;
 use App\Http\Controllers\Admin\UserRankController;
@@ -29,6 +30,8 @@ use App\Http\Controllers\Admin\DriverApplicationController;
 use App\Http\Controllers\Admin\DiscountCodeController;
 use App\Http\Controllers\Admin\UserRankHistoryController;
 use App\Http\Controllers\Admin\ChatController;
+use App\Http\Controllers\Admin\GeneralSettingController;
+use App\Http\Controllers\Admin\OrderController;
 // Driver Auth Controller (if it's considered part of admin management or hiring process)
 use App\Http\Controllers\Driver\Auth\AuthController as DriverAuthController;
 
@@ -38,7 +41,7 @@ Route::prefix('admin')->name('admin.')->group(function () {
     // Đăng nhập
     Route::controller(AuthController::class)->group(function () {
         Route::get('login', 'showLoginForm')->name('login');
-        Route::post('login', 'login')->name('login.submit');
+        Route::post('login', 'login')->name('login.submit')->middleware('throttle:5,1');
     });
 
     // Đăng xuất (chỉ cho Admin đã đăng nhập)
@@ -183,14 +186,16 @@ Route::middleware(['auth:admin'])->prefix('admin')->name('admin.')->group(functi
         Route::get('/', [ComboController::class, 'index'])->name('index');
         Route::get('/create', [ComboController::class, 'create'])->name('create');
         Route::post('/store', [ComboController::class, 'store'])->name('store');
-        Route::get('/edit/{id}', [ComboController::class, 'edit'])->name('edit');
-        Route::put('/update/{id}', [ComboController::class, 'update'])->name('update');
-        Route::get('/show/{id}', [ComboController::class, 'show'])->name('show');
-        Route::delete('/delete/{id}', [ComboController::class, 'destroy'])->name('destroy');
+        Route::get('/edit/{combo}', [ComboController::class, 'edit'])->name('edit');
+        Route::put('/update/{combo}', [ComboController::class, 'update'])->name('update');
+        Route::get('/show/{combo}', [ComboController::class, 'show'])->name('show');
+        Route::delete('/delete/{combo}', [ComboController::class, 'destroy'])->name('destroy');
 
         // Status management
-        Route::patch('/{id}/toggle-status', [ComboController::class, 'toggleStatus'])->name('toggle-status');
-        Route::patch('/{id}/toggle-featured', [ComboController::class, 'toggleFeatured'])->name('toggle-featured');
+        Route::patch('/{combo}/toggle-status', [ComboController::class, 'toggleStatus'])->name('toggle-status');
+        Route::patch('/bulk-update-status', [ComboController::class, 'bulkUpdateStatus'])->name('bulk-update-status');
+        Route::patch('/bulk-update-featured', [ComboController::class, 'bulkUpdateFeatured'])->name('bulk-update-featured');
+        Route::patch('/{combo}/quick-update-quantity', [ComboController::class, 'quickUpdateQuantity'])->name('admin.combos.quickUpdateQuantity');
     });
 
     // Driver Application Management
@@ -297,6 +302,15 @@ Route::middleware(['auth:admin'])->prefix('admin')->name('admin.')->group(functi
         Route::get('{product}/stock-summary', [BranchStockController::class, 'summary'])->name('stock-summary');
         Route::get('low-stock-alerts', [BranchStockController::class, 'lowStockAlerts'])->name('low-stock-alerts');
         Route::get('out-of-stock', [BranchStockController::class, 'outOfStock'])->name('out-of-stock');
+
+    });
+
+    // General Settings Management
+    Route::prefix('general-settings')->name('general_settings.')->group(function () {
+        Route::get('/', [GeneralSettingController::class, 'index'])->name('index');
+        Route::post('/', [GeneralSettingController::class, 'store'])->name('store');
+        Route::put('/{id}', [GeneralSettingController::class, 'update'])->name('update');
+        Route::delete('/{id}', [GeneralSettingController::class, 'destroy'])->name('destroy');
     });
 
     // Hiring driver routes (these are publicly accessible for applications but relate to driver management)
@@ -325,6 +339,19 @@ Route::middleware(['auth:admin'])->prefix('admin')->name('admin.')->group(functi
         Route::get('/messages/{conversation}', [ChatController::class, 'getMessages'])->name('messages');
         Route::post('/distribute', [ChatController::class, 'distributeConversation'])->name('distribute');
     });
+
+    Route::get('notifications', [NotificationController::class, 'index'])->name('notifications.index');
+    Route::post('notifications/{id}/read', [NotificationController::class, 'markAsRead'])->name('notifications.read');
+    Route::get('notifications/item/{orderId}', [OrderController::class, 'notificationItem'])->name('admin.notifications.item');
+    // Orders Management
+    Route::prefix('orders')->name('orders.')->group(function () {
+        Route::get('/', [OrderController::class, 'index'])->name('index');
+        // Thêm route show chi tiết đơn hàng
+        Route::get('/show/{id}', [OrderController::class, 'show'])->name('show');
+        Route::get('/export', [OrderController::class, 'export'])->name('export');
+        // Route để lấy HTML partial cho order row (cho realtime)
+        Route::get('/{id}/row', [OrderController::class, 'getOrderRow'])->name('row');
+    });
 });
 
 
@@ -333,3 +360,5 @@ Route::middleware(['auth:admin'])->prefix('admin')->name('admin.')->group(functi
 Route::post('/broadcasting/auth', function () {
     return Broadcast::auth(request());
 })->middleware('web');
+// Thêm vào group combos:
+

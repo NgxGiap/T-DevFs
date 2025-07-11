@@ -6,7 +6,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>@yield('title', 'FastFood')</title>
-    <meta name="csrf-token" content="{{ csrf_token() }}">
     <script type="module" src="https://unpkg.com/ionicons@7.1.0/dist/ionicons/ionicons.esm.js"></script>
     <script nomodule src="https://unpkg.com/ionicons@7.1.0/dist/ionicons/ionicons.js"></script>
     <!-- Tailwind CSS -->
@@ -38,6 +37,8 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swiper/swiper-bundle.min.css" />
     <!-- Notification Styles -->
     <link rel="stylesheet" href="{{ asset('css/customer/app.css') }}">
+    <!-- Modal Styles -->
+    <link rel="stylesheet" href="{{ asset('css/modal.css') }}">
 
     <!-- Custom CSS -->
     @yield('styles')
@@ -192,6 +193,7 @@
     <script src="https://js.pusher.com/7.2/pusher.min.js"></script>
     <script type="module" src="https://unpkg.com/ionicons@5.5.2/dist/ionicons/ionicons.esm.js"></script>
     <script nomodule src="https://unpkg.com/ionicons@5.5.2/dist/ionicons/ionicons.js"></script>
+    <script src="{{ asset('js/modal.js') }}"></script>
 
     <script>
         // Function to show notifications programmatically
@@ -221,8 +223,8 @@
             const color = colors[type] || colors.info;
 
             const notificationHTML = `
-                <div class="notification-alert bg-white border-l-4 border-${color.bg}-500 rounded-lg overflow-hidden mb-4 transition-all duration-300" 
-                     data-type="${type}" 
+                <div class="notification-alert bg-white border-l-4 border-${color.bg}-500 rounded-lg overflow-hidden mb-4 transition-all duration-300"
+                     data-type="${type}"
                      id="${notificationId}">
                     <div class="p-4">
                         <div class="flex items-start">
@@ -234,7 +236,7 @@
                             <div class="ml-3 flex-1">
                                 <div class="flex items-center justify-between">
                                     <h3 class="text-sm font-bold text-gray-900">${type.charAt(0).toUpperCase() + type.slice(1)}</h3>
-                                    <button class="close-notification text-gray-400 hover:text-gray-600 transition-colors ml-2" 
+                                    <button class="close-notification text-gray-400 hover:text-gray-600 transition-colors ml-2"
                                             data-target="${notificationId}">
                                         <i class="fas fa-times text-sm"></i>
                                     </button>
@@ -298,8 +300,11 @@
     <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
 
     <script>
-        axios.defaults.headers.common['X-CSRF-TOKEN'] = document.querySelector('meta[name="csrf-token"]').getAttribute(
-            'content');
+        // Lấy CSRF token một cách an toàn
+        const csrfMetaTag = document.querySelector('meta[name="csrf-token"]');
+        if (csrfMetaTag) {
+            axios.defaults.headers.common['X-CSRF-TOKEN'] = csrfMetaTag.getAttribute('content');
+        }
     </script>
 
     <!-- Firebase SDK -->
@@ -361,9 +366,6 @@
     <script>
         // Global function to update the cart counter
         window.updateCartCount = function(count) {
-            // Save the cart count in localStorage for consistency between pages
-            localStorage.setItem('cart_count', count);
-
             // Update all cart counter elements on the page
             const counters = document.querySelectorAll('#cart-counter');
             counters.forEach(counter => {
@@ -377,18 +379,21 @@
                     counter.classList.add('bg-orange-500');
                 }, 1000);
             });
+            // Update mini cart count nếu có
+            if (typeof updateMiniCartCount === 'function') {
+                updateMiniCartCount(count);
+            }
         };
+
+        // Không dùng localStorage cho cart_count nữa
+        // Không cần đoạn code lấy cart_count từ localStorage khi DOMContentLoaded
 
         // Initialize Pusher on every page to listen for cart updates
         document.addEventListener('DOMContentLoaded', function() {
-            // Check if we should restore cart count from localStorage
-            const savedCount = localStorage.getItem('cart_count');
-            if (savedCount) {
-                const sessionCount = {{ session('cart_count', 0) }};
-                // Only use localStorage if it has a newer value than the session
-                if (parseInt(savedCount) > sessionCount) {
-                    window.updateCartCount(savedCount);
-                }
+            // Không dùng localStorage cho cart_count nữa
+            // Khi reload trang, nếu có biến cartCountFromServer thì cập nhật luôn
+            if (typeof window.cartCountFromServer !== 'undefined') {
+                window.updateCartCount(window.cartCountFromServer);
             }
 
             // Set up Pusher if the script is loaded
@@ -472,75 +477,89 @@
             if (savedCount) {
                 const sessionCount = {{ auth()->check() ? auth()->user()->wishlist->count() : 0 }};
                 // Only use localStorage if it has a newer value than the session
-                if (parseInt(savedCount) > sessionCount) {
+                if (parseInt(savedCount) >= sessionCount) {
                     window.updateWishlistCount(savedCount);
                 }
             }
 
             // Set up Pusher if the script is loaded and user is authenticated
             if (typeof Pusher !== 'undefined' && {{ auth()->check() ? 'true' : 'false' }}) {
-                console.log('Initializing Pusher for wishlist updates...');
-
+                // This Pusher instance is for layout elements.
+                // Page-specific scripts might have their own or should share this one.
                 const pusher = new Pusher('{{ env('PUSHER_APP_KEY') }}', {
                     cluster: '{{ env('PUSHER_APP_CLUSTER') }}',
                     encrypted: true,
-                    enabledTransports: ['ws', 'wss'],
-                    debug: true
-                });
-
-                // Subscribe to wishlist channel
-                const channelName = 'user-wishlist-channel.{{ auth()->id() }}';
-                console.log('Subscribing to channel:', channelName);
-
-                const wishlistChannel = pusher.subscribe(channelName);
-
-                // Log connection status
-                pusher.connection.bind('connected', () => {
-                    console.log('Pusher connected successfully');
-                });
-
-                pusher.connection.bind('error', (err) => {
-                    console.error('Pusher connection error:', err);
-                });
-
-                // Listen for wishlist updates
-                wishlistChannel.bind('favorite-updated', function(data) {
-                    console.log('Received favorite-updated event:', data);
-
-                    window.updateWishlistCount(data.count);
-
-                    // Update favorite button state if on product page
-                    const favoriteBtn = document.querySelector(
-                        `.favorite-btn[data-product-id="${data.product_id}"]`);
-                    if (favoriteBtn) {
-                        console.log('Updating favorite button state for product:', data.product_id);
-                        const icon = favoriteBtn.querySelector('i');
-                        if (data.is_favorite) {
-                            icon.classList.remove('far');
-                            icon.classList.add('fas', 'text-red-500');
-                        } else {
-                            icon.classList.remove('fas', 'text-red-500');
-                            icon.classList.add('far');
+                    authEndpoint: '/broadcasting/auth',
+                    auth: {
+                        headers: {
+                            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || ''
                         }
                     }
                 });
 
-                // Log subscription status
-                wishlistChannel.bind('subscription_succeeded', () => {
-                    console.log('Successfully subscribed to wishlist channel');
+                // Subscribe to the correct private wishlist channel
+                const channelName = 'private-user-wishlist-channel.{{ auth()->id() }}';
+                const wishlistChannel = pusher.subscribe(channelName);
+
+                // Listen for wishlist updates
+                wishlistChannel.bind('favorite-updated', function(data) {
+                    // This listener in the layout should only update the global counter.
+                    window.updateWishlistCount(data.count);
                 });
 
-                wishlistChannel.bind('subscription_error', (error) => {
-                    console.error('Error subscribing to wishlist channel:', error);
+                wishlistChannel.bind('pusher:subscription_succeeded', () => {
+                    console.log('Layout subscribed to wishlist channel:', channelName);
                 });
-            } else {
-                console.log('Pusher not initialized because:', {
-                    pusherLoaded: typeof Pusher !== 'undefined',
-                    userAuthenticated: {{ auth()->check() ? 'true' : 'false' }}
+
+                wishlistChannel.bind('pusher:subscription_error', (error) => {
+                    console.error('Layout failed to subscribe to wishlist channel:', channelName, error);
                 });
             }
         });
     </script>
+    @include('components.modal')
+
+    @if(isset($cartItems))
+    <script>
+        window.cartCountFromServer = {{ count($cartItems) }};
+    </script>
+    @endif
+
+    <script>
+function getCsrfToken() {
+    return document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+}
+function updateCsrfToken(newToken) {
+    document.querySelector('meta[name="csrf-token"]').setAttribute('content', newToken);
+    if (window.jQuery) {
+        $.ajaxSetup({ headers: { 'X-CSRF-TOKEN': newToken } });
+    }
+    if (window.axios) {
+        window.axios.defaults.headers.common['X-CSRF-TOKEN'] = newToken;
+    }
+}
+$(document).ajaxError(function(event, jqxhr, settings, thrownError) {
+    if (jqxhr.status === 419) {
+        fetch('/refresh-csrf')
+            .then(res => res.json())
+            .then(data => {
+                updateCsrfToken(data.csrf_token);
+                // Có thể gửi lại request ở đây nếu muốn
+            });
+    }
+});
+if (window.axios) {
+    window.axios.interceptors.response.use(null, async function(error) {
+        if (error.response && error.response.status === 419) {
+            const res = await fetch('/refresh-csrf');
+            const data = await res.json();
+            updateCsrfToken(data.csrf_token);
+            // Có thể gửi lại request ở đây nếu muốn
+        }
+        return Promise.reject(error);
+    });
+}
+</script>
 </body>
 
 </html>

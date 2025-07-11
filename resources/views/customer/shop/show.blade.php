@@ -353,16 +353,81 @@
         font-size: 0.8rem;
         font-weight: 400;
     }
+    /* Modern square anonymous checkbox */
+    .custom-checkbox {
+        appearance: none;
+        width: 22px;
+        height: 22px;
+        border: 2px solid #f97316;
+        border-radius: 6px;
+        background: #fff;
+        outline: none;
+        cursor: pointer;
+        position: relative;
+        transition: border-color 0.2s, box-shadow 0.2s;
+        box-shadow: 0 1px 3px rgba(249,115,22,0.08);
+        vertical-align: middle;
+        display: inline-block;
+    }
+    .custom-checkbox:checked {
+        background: #f97316;
+        border-color: #f97316;
+    }
+    .custom-checkbox:checked:after {
+        content: '';
+        display: block;
+        position: absolute;
+        left: 6px;
+        top: 2px;
+        width: 6px;
+        height: 12px;
+        border: solid #fff;
+        border-width: 0 3px 3px 0;
+        transform: rotate(45deg);
+    }
+    .custom-checkbox:hover {
+        border-color: #ea580c;
+        box-shadow: 0 2px 8px rgba(249,115,22,0.15);
+    }
+    .anonymous-label {
+        margin-left: 10px;
+        font-weight: 600;
+        color: #374151;
+        font-size: 1rem;
+        cursor: pointer;
+        user-select: none;
+        letter-spacing: 0.01em;
+        transition: color 0.2s;
+    }
+    .custom-checkbox:checked + .anonymous-label {
+        color: #f97316;
+    }
+    .reply-item {
+        position: relative;
+    }
+    .reply-arrow {
+        width: 24px;
+        flex-shrink: 0;
+        display: flex;
+        align-items: flex-start;
+        margin-top: 8px;
+    }
+    .reply-item .bg-blue-50 {
+        position: relative;
+    }
 </style>
 <div class="container mx-auto px-4 py-8">
     <!-- Product Info Section -->
     <div class="grid lg:grid-cols-2 gap-8 mb-12">
         <!-- Left column: Images -->
         <div class="space-y-4">
+            @php
+                $primaryImage = $product->images->where('is_primary', 1)->first() ?? $product->images->first();
+            @endphp
             <div class="relative h-[300px] sm:h-[400px] rounded-lg overflow-hidden border">
-                <img src="{{ $product->images->first() ? $product->images->first()->s3_url : '/placeholder.svg?height=600&width=600' }}" 
-                     alt="{{ $product->name }}" 
-                     class="object-cover w-full h-full" 
+                <img src="{{ $primaryImage ? Storage::disk('s3')->url($primaryImage->img) : '/placeholder.svg?height=600&width=600' }}"
+                     alt="{{ $product->name }}"
+                     class="object-cover w-full h-full"
                      id="main-product-image">
                 @if($product->release_at && $product->release_at->diffInDays(now()) <= 7)
                     <span class="absolute top-2 right-2 bg-green-500 text-white text-xs px-2 py-1 rounded-full">Mới</span>
@@ -371,9 +436,9 @@
 
             <div class="flex gap-2 overflow-x-auto pb-2">
                 @foreach($product->images as $image)
-                <button class="relative w-20 h-20 rounded border-2 {{ $loop->first ? 'border-orange-500' : 'border-transparent' }} overflow-hidden flex-shrink-0 product-thumbnail">
-                    <img src="{{ $image->s3_url }}" 
-                         alt="{{ $product->name }} - Hình {{ $loop->iteration }}" 
+                <button class="relative w-20 h-20 rounded border-2 {{ ($primaryImage && $image->id === $primaryImage->id) ? 'border-orange-500' : 'border-transparent' }} overflow-hidden flex-shrink-0 product-thumbnail">
+                    <img src="{{ Storage::disk('s3')->url($image->img) }}"
+                         alt="{{ $product->name }} - Hình {{ $loop->iteration }}"
                          class="object-cover w-full h-full">
                 </button>
                 @endforeach
@@ -384,37 +449,46 @@
         <div class="space-y-6">
             @php
                 $freeshipCode = null;
-                $maxDiscountCode = null;
-                $maxDiscountAmount = 0;
+                $otherDiscounts = [];
                 if(isset($product->applicable_discount_codes)) {
                     foreach($product->applicable_discount_codes as $discountCode) {
                         if($discountCode->discount_type === 'free_shipping') {
                             $freeshipCode = $discountCode;
                         } else {
-                            // Tính số tiền giảm
-                            $discountAmount = 0;
-                            if($discountCode->discount_type === 'percentage') {
-                                $discountAmount = $product->base_price * ($discountCode->discount_value / 100);
-                                if(isset($discountCode->max_discount_amount) && $discountCode->max_discount_amount > 0) {
-                                    $discountAmount = min($discountAmount, $discountCode->max_discount_amount);
-                                }
-                            } elseif($discountCode->discount_type === 'fixed_amount') {
-                                $discountAmount = $discountCode->discount_value;
-                            }
-                            // Kiểm tra điều kiện đơn tối thiểu
-                            if($discountCode->min_order_amount > 0 && $product->base_price < $discountCode->min_order_amount) {
-                                $discountAmount = 0;
-                            }
-                            if($discountAmount > $maxDiscountAmount) {
-                                $maxDiscountAmount = $discountAmount;
-                                $maxDiscountCode = $discountCode;
-                            }
+                            $otherDiscounts[] = $discountCode;
                         }
                     }
                 }
-                $finalPrice = $product->base_price;
-                if($maxDiscountAmount > 0) {
-                    $finalPrice = max(0, $product->base_price - $maxDiscountAmount);
+                // Tìm mã giảm giá trừ nhiều nhất
+                $maxDiscount = null;
+                $maxValue = 0;
+                foreach($otherDiscounts as $discountCode) {
+                    if($discountCode->discount_type === 'fixed_amount') {
+                        $value = $discountCode->discount_value;
+                    } elseif($discountCode->discount_type === 'percentage') {
+                        $value = isset($product->min_price) ? ($product->min_price * $discountCode->discount_value / 100) : 0;
+                    } else {
+                        $value = 0;
+                    }
+                    
+                    if($value > $maxValue) {
+                        $maxValue = $value;
+                        $maxDiscount = $discountCode;
+                    }
+                }
+                
+                // Giá gốc
+                $originPrice = $product->discount_price && $product->base_price > $product->discount_price
+                    ? $product->discount_price
+                    : $product->min_price;
+                // Giá sau giảm
+                $finalPrice = $originPrice;
+                if($maxDiscount) {
+                    if($maxDiscount->discount_type === 'fixed_amount') {
+                        $finalPrice = max(0, $originPrice - $maxDiscount->discount_value);
+                    } elseif($maxDiscount->discount_type === 'percentage') {
+                        $finalPrice = max(0, $originPrice * (1 - $maxDiscount->discount_value / 100));
+                    }
                 }
             @endphp
             <h1 class="text-2xl sm:text-3xl font-bold">{{ $product->name }}</h1>
@@ -423,15 +497,15 @@
             <div class="space-y-2">
                 <div class="flex items-center gap-3">
                     <span class="text-3xl font-bold text-orange-500 transition-all duration-300" id="current-price">
-                        {{ number_format($finalPrice, 0, ',', '.') }}đ
+                        {{ number_format($finalPrice, 0, '', '.') }} đ
                     </span>
-                    @if($maxDiscountAmount > 0)
+                    @if($finalPrice < $originPrice)
                     <span class="text-lg text-gray-400 line-through" id="base-price">
-                        {{ number_format($product->base_price, 0, ',', '.') }}đ
+                        {{ number_format($originPrice, 0, '', '.') }} đ
                     </span>
                     @else
                     <span class="text-lg text-gray-400 line-through hidden" id="base-price">
-                        {{ number_format($product->base_price, 0, ',', '.') }}đ
+                        {{ number_format($originPrice, 0, '', '.') }} đ
                     </span>
                     @endif
                 </div>
@@ -567,17 +641,6 @@
                                 ->where('branch_id', $selectedBranchId)
                                 ->first() : null;
                             
-                            // Debug log for each variant
-                            \Log::debug('Variant Stock Info:', [
-                                'attribute' => $attribute->name,
-                                'value' => $value->value,
-                                'variant_stock' => $variantStock ? [
-                                    'id' => $variantStock->id,
-                                    'product_variant_id' => $variantStock->product_variant_id,
-                                    'stock_quantity' => $variantStock->stock_quantity
-                                ] : null
-                            ]);
-                            
                             $stockQuantity = $variantStock ? $variantStock->stock_quantity : 0;
                             $productVariantId = $variantStock ? $variantStock->product_variant_id : null;
                         @endphp
@@ -597,16 +660,9 @@
                                 {{ $value->value }}
                                 @if($value->price_adjustment != 0)
                                     <span class="text-sm ml-1 {{ $value->price_adjustment > 0 ? 'text-red-600' : 'text-green-600' }}">
-                                        {{ $value->price_adjustment > 0 ? '+' : '' }}{{ number_format($value->price_adjustment, 0, ',', '.') }}đ
+                                        {{ $value->price_adjustment > 0 ? '+' : '' }}{{ number_format($value->price_adjustment, 0, '', '.') }} đ
                                     </span>
                                 @endif
-                                <span class="text-xs ml-1 {{ $stockQuantity <= 5 ? 'text-orange-500' : 'text-gray-500' }} stock-display">
-                                    @if($stockQuantity > 0)
-                                        (Còn {{ $stockQuantity }})
-                                    @else
-                                        (Hết hàng)
-                                    @endif
-                                </span>
                             </span>
                         </label>
                         @endforeach
@@ -665,7 +721,7 @@
                             <div class="mt-1 text-center">
                                 <p class="text-xs font-medium truncate">{{ $topping->name }}</p>
                                 <p class="text-xs text-orange-500 font-medium">
-                                    +{{ number_format($topping->price, 0, ',', '.') }}đ
+                                    +{{ number_format($topping->price, 0, '', '.') }} đ
                                 </p>
                             </div>
                         </label>
@@ -696,6 +752,7 @@
             <!-- Action Buttons -->
             <div class="flex flex-col sm:flex-row gap-3 pt-4">
                 <button id="add-to-cart" 
+                        data-product-id="{{ $product->id }}"
                         class="w-full sm:flex-1 {{ isset($product->has_stock) && $product->has_stock ? 'bg-orange-500 hover:bg-orange-600' : 'bg-gray-400' }} text-white px-6 py-3 rounded-md font-medium transition-colors flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
                         {{ isset($product->has_stock) && !$product->has_stock ? 'disabled' : '' }}>
                     <i class="fas {{ isset($product->has_stock) && $product->has_stock ? 'fa-shopping-cart' : 'fa-ban' }} h-5 w-5 mr-2"></i>
@@ -754,97 +811,17 @@
             <!-- Ingredients Tab -->
             <div class="tab-content hidden" id="content-ingredients">
                 @if(!empty($product->ingredients))
-                    @php
-                        $ingredients = is_string($product->ingredients) ? json_decode($product->ingredients, true) : $product->ingredients;
-                    @endphp
-                    
-                    @if(is_array($ingredients))
-                        <div class="space-y-6">
-                            @if(isset($ingredients['base']))
-                                <div>
-                                    <h4 class="font-medium mb-3 text-gray-900">Nguyên liệu cơ bản:</h4>
-                                    <ul class="space-y-2">
-                                        @foreach((array)$ingredients['base'] as $item)
-                                            <li class="flex items-center space-x-2 text-gray-700">
-                                                <span class="w-1.5 h-1.5 bg-orange-500 rounded-full"></span>
-                                                <span class="flex-1">{{ is_array($item) ? ($item['name'] ?? '') : $item }}</span>
-                                            </li>
-                                        @endforeach
-                                    </ul>
-                                </div>
-                            @endif
-
-                            @if(isset($ingredients['vegetables']))
-                                <div>
-                                    <h4 class="font-medium mb-3 text-gray-900">Rau củ:</h4>
-                                    <ul class="space-y-2">
-                                        @foreach((array)$ingredients['vegetables'] as $item)
-                                            <li class="flex items-center space-x-2 text-gray-700">
-                                                <span class="w-1.5 h-1.5 bg-orange-500 rounded-full"></span>
-                                                <span class="flex-1">{{ is_array($item) ? ($item['name'] ?? '') : $item }}</span>
-                                            </li>
-                                        @endforeach
-                                    </ul>
-                                </div>
-                            @endif
-
-                            @if(isset($ingredients['meat']))
-                                <div>
-                                    <h4 class="font-medium mb-3 text-gray-900">Thịt:</h4>
-                                    <ul class="space-y-2">
-                                        @foreach((array)$ingredients['meat'] as $item)
-                                            <li class="flex items-center space-x-2 text-gray-700">
-                                                <span class="w-1.5 h-1.5 bg-orange-500 rounded-full"></span>
-                                                <span class="flex-1">{{ is_array($item) ? ($item['name'] ?? '') : $item }}</span>
-                                            </li>
-                                        @endforeach
-                                    </ul>
-                                </div>
-                            @endif
-
-                            @if(isset($ingredients['sauces']))
-                                <div>
-                                    <h4 class="font-medium mb-3 text-gray-900">Sốt:</h4>
-                                    <ul class="space-y-2">
-                                        @foreach((array)$ingredients['sauces'] as $item)
-                                            <li class="flex items-center space-x-2 text-gray-700">
-                                                <span class="w-1.5 h-1.5 bg-orange-500 rounded-full"></span>
-                                                <span class="flex-1">{{ is_array($item) ? ($item['name'] ?? '') : $item }}</span>
-                                            </li>
-                                        @endforeach
-                                    </ul>
-                                </div>
-                            @endif
-
-                            @if(isset($ingredients['cheese']))
-                                <div>
-                                    <h4 class="font-medium mb-3 text-gray-900">Phô mai:</h4>
-                                    <ul class="space-y-2">
-                                        @foreach((array)$ingredients['cheese'] as $item)
-                                            <li class="flex items-center space-x-2 text-gray-700">
-                                                <span class="w-1.5 h-1.5 bg-orange-500 rounded-full"></span>
-                                                <span class="flex-1">{{ is_array($item) ? ($item['name'] ?? '') : $item }}</span>
-                                            </li>
-                                        @endforeach
-                                    </ul>
-                                </div>
-                            @endif
-
-                            @foreach($ingredients as $key => $items)
-                                @if(!in_array($key, ['base', 'vegetables', 'meat', 'sauces', 'cheese']) && is_array($items))
-                                    <div>
-                                        <h4 class="font-medium mb-3 text-gray-900">{{ ucfirst(str_replace('_', ' ', $key)) }}:</h4>
-                                        <ul class="space-y-2">
-                                            @foreach($items as $item)
-                                                <li class="flex items-center space-x-2 text-gray-700">
-                                                    <span class="w-1.5 h-1.5 bg-orange-500 rounded-full"></span>
-                                                    <span class="flex-1">{{ is_array($item) ? ($item['name'] ?? '') : $item }}</span>
-                                                </li>
-                                            @endforeach
-                                        </ul>
-                                    </div>
-                                @endif
-                            @endforeach
+                    @if(is_array($product->ingredients) && !empty($product->ingredients))
+                        <div class="space-y-4">
+                            <h4 class="font-medium mb-3 text-gray-900">Thành phần:</h4>
+                            <ul class="space-y-2">
+                                @foreach($product->ingredients as $ingredient)
+                                    <li class="flex items-center space-x-2 text-gray-700">
+                                        <span class="w-1.5 h-1.5 bg-orange-500 rounded-full"></span>
+                                        <span class="flex-1">{{ $ingredient }}</span>
+                                    </li>
+                                @endforeach
+                            </ul>
                         </div>
                     @else
                         <p class="text-gray-600">{{ $product->ingredients }}</p>
@@ -888,7 +865,7 @@
 
                     <div class="divide-y max-h-[600px] overflow-y-auto scrollbar-thin scrollbar-thumb-orange-200 scrollbar-track-gray-100 hover:scrollbar-thumb-orange-300">
                         @forelse($product->reviews as $review)
-                        <div class="p-6 hover:bg-gray-50/50 transition-colors">
+                        <div class="p-6 hover:bg-gray-50/50 transition-colors" data-review-id="{{ $review->id }}">
                             <div class="flex items-start justify-between gap-4">
                                 <div class="flex items-start gap-4">
                                     <div class="w-12 h-12 rounded-full bg-gradient-to-br from-orange-400 to-orange-600 flex items-center justify-center flex-shrink-0">
@@ -942,16 +919,21 @@
                                 
                                 @if($review->review_image)
                                     <div class="mt-3">
-                                        <img src="{{ Storage::url($review->review_image) }}" 
+                                        <img src="{{ Storage::disk('s3')->url($review->review_image) }}" 
                                              alt="Review image" 
                                              class="rounded-lg max-h-48 object-cover hover:opacity-95 transition-opacity cursor-pointer">
                                     </div>
                                 @endif
 
                                 <div class="flex items-center gap-6 pt-2">
-                                    <button class="inline-flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700 transition-colors">
-                                        <i class="far fa-thumbs-up"></i>
-                                        <span>Hữu ích ({{ $review->helpful_count }})</span>
+                                    @php
+                                        $userHelpful = auth()->check() ? \App\Models\ReviewHelpful::where('user_id', auth()->id())->where('review_id', $review->id)->exists() : false;
+                                    @endphp
+                                    <button class="inline-flex items-center gap-2 text-sm helpful-btn {{ $userHelpful ? 'helpful-active text-sky-600' : '' }}"
+                                            data-review-id="{{ $review->id }}"
+                                            data-helpful="{{ $userHelpful ? '1' : '0' }}">
+                                        <i class="{{ $userHelpful ? 'fas' : 'far' }} fa-thumbs-up {{ $userHelpful ? 'text-sky-600' : '' }}"></i>
+                                        <span>Hữu ích (<span class="helpful-count">{{ $review->helpful_count }}</span>)</span>
                                     </button>
                                     @if($review->report_count > 0)
                                         <span class="inline-flex items-center gap-1 text-xs text-red-500">
@@ -959,9 +941,46 @@
                                             {{ $review->report_count }} báo cáo
                                         </span>
                                     @endif
+                                    @auth
+                                        <button class="inline-flex items-center gap-2 text-sm text-blue-500 hover:text-blue-700 transition-colors reply-review-btn"
+                                            data-review-id="{{ $review->id }}"
+                                            data-user-name="{{ $review->is_anonymous ? 'Ẩn danh' : $review->user->name }}"
+                                            data-route-reply="{{ route('reviews.reply', ['review' => $review->id]) }}">
+                                            <i class="fas fa-reply"></i>
+                                            <span>Phản hồi</span>
+                                        </button>
+                                        @if($review->user_id === auth()->id() || (auth()->user()->is_admin ?? false))
+                                            <button class="inline-flex items-center gap-2 text-sm text-red-500 hover:text-red-700 transition-colors delete-review-btn" data-review-id="{{ $review->id }}">
+                                                <i class="fas fa-trash-alt"></i>
+                                                <span>Xóa</span>
+                                            </button>
+                                        @endif
+                                    @endauth
                                 </div>
                             </div>
                         </div>
+                        <!-- Hiển thị các reply -->
+                        @foreach($review->replies as $reply)
+                            <div class="reply-item flex items-start gap-2 ml-8 mt-2 relative" data-reply-id="{{ $reply->id }}">
+                                <div class="reply-arrow">
+                                    <svg width="24" height="24" viewBox="0 0 24 24" class="text-blue-400"><path d="M2 12h16M18 12l-4-4m4 4l-4 4" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                                </div>
+                                <div class="bg-blue-50 border border-blue-200 rounded-lg px-4 py-2 flex-1">
+                                    <div class="flex items-center gap-2 mb-1">
+                                        <span class="font-semibold text-blue-700">{{ $reply->user->name ?? 'Ẩn danh' }}</span>
+                                        <span class="text-xs text-gray-400">{{ $reply->reply_date ? \Carbon\Carbon::parse($reply->reply_date)->format('d/m/Y H:i') : '' }}</span>
+                                        @auth
+                                            @if($reply->user_id === auth()->id() || (auth()->user()->is_admin ?? false))
+                                                <button class="inline-flex items-center gap-1 text-xs text-red-500 hover:text-red-700 transition-colors delete-reply-btn" data-reply-id="{{ $reply->id }}">
+                                                    <i class="fas fa-trash-alt"></i> Xóa
+                                                </button>
+                                            @endif
+                                        @endauth
+                                    </div>
+                                    <div class="text-gray-700">{{ $reply->reply }}</div>
+                                </div>
+                            </div>
+                        @endforeach
                         @empty
                         <div class="p-8 text-center">
                             <div class="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -971,6 +990,51 @@
                             <p class="text-gray-400 text-sm mt-1">Hãy là người đầu tiên đánh giá sản phẩm!</p>
                         </div>
                         @endforelse
+                    </div>
+
+                    {{-- Form gửi đánh giá hoặc phản hồi --}}
+                    <div id="review-reply-form-container" class="mt-8 p-6 bg-gray-50 rounded-lg border border-gray-200">
+                        <form id="review-reply-form" action="{{ route('products.review', $product->id) }}" method="POST" enctype="multipart/form-data" class="space-y-4" data-default-action="{{ route('products.review', $product->id) }}">
+                            @csrf
+                            <input type="hidden" name="branch_id" value="{{ $selectedBranchId }}">
+                            <input type="hidden" name="reply_review_id" id="reply_review_id" value="">
+                            <div id="replying-to" class="mb-2 hidden">
+                                <span class="text-sm text-blue-600">Phản hồi cho <b id="replying-to-user"></b></span>
+                                <button type="button" id="cancel-reply" class="ml-2 text-xs text-gray-500 hover:text-red-500">Hủy</button>
+                            </div>
+                            <div class="flex items-center justify-between mb-4 gap-2 flex-wrap" id="rating-row">
+                                <h4 class="font-semibold text-lg" id="form-title" data-default-title="Gửi đánh giá của bạn">Gửi đánh giá của bạn</h4>
+                                <div class="flex items-center" id="rating-stars">
+                                    @for($i = 1; $i <= 5; $i++)
+                                        <input type="radio" id="star{{ $i }}" name="rating" value="{{ $i }}" class="sr-only">
+                                        <label for="star{{ $i }}" class="cursor-pointer text-2xl text-yellow-400" style="position: relative;">
+                                            <i class="fas fa-star"></i>
+                                        </label>
+                                    @endfor
+                                </div>
+                            </div>
+                            <div id="review-message" class="mb-4 text-center"></div>
+                            <div>
+                                <textarea name="review" id="review-textarea" rows="3" class="w-full border rounded p-2" placeholder="Chia sẻ cảm nhận của bạn..." data-default-placeholder="Chia sẻ cảm nhận của bạn..."></textarea>
+                            </div>
+                            <div>
+                                <label class="block font-medium mb-1">Ảnh minh họa (tùy chọn):</label>
+                                <div class="flex items-center justify-between gap-4 flex-wrap">
+                                    <div>
+                                        <input type="file" name="review_image" id="review_image" accept="image/*" class="hidden">
+                                        <label for="review_image" class="w-20 h-20 border-2 border-dashed border-gray-300 rounded-lg flex items-center justify-center cursor-pointer hover:border-orange-400 transition-colors relative">
+                                            <i class="fas fa-camera text-3xl text-orange-500"></i>
+                                            <img id="preview_image" src="#" alt="Preview" class="absolute inset-0 w-full h-full object-cover rounded-lg hidden" />
+                                        </label>
+                                    </div>
+                                    <div class="flex items-center ml-auto">
+                                        <input type="checkbox" name="is_anonymous" id="is_anonymous" value="1" class="custom-checkbox" {{ old('is_anonymous') ? 'checked' : '' }}>
+                                        <label for="is_anonymous" class="anonymous-label">Ẩn danh</label>
+                                    </div>
+                                </div>
+                            </div>
+                            <button type="submit" id="review-submit-btn" class="bg-orange-500 hover:bg-orange-600 text-white px-6 py-2 rounded font-medium" data-default-text="Gửi đánh giá">Gửi đánh giá</button>
+                        </form>
                     </div>
 
                     @if($product->reviews->count() > 0)
@@ -994,12 +1058,12 @@
     <div class="mt-12">
         <h2 class="text-2xl font-bold mb-6">Sản Phẩm Liên Quan</h2>
         <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-6">
-            @foreach($relatedProducts as $product)
+            @foreach($relatedProducts as $relatedProduct)
             @php
                 $freeship = null;
                 $otherDiscounts = [];
-                if(isset($product->applicable_discount_codes)) {
-                    foreach($product->applicable_discount_codes as $discountCode) {
+                if(isset($relatedProduct->applicable_discount_codes)) {
+                    foreach($relatedProduct->applicable_discount_codes as $discountCode) {
                         if($discountCode->discount_type === 'free_shipping') {
                             $freeship = $discountCode;
                         } else {
@@ -1007,66 +1071,66 @@
                         }
                     }
                 }
-                $maxDiscount = null;
-                $maxValue = 0;
+                $relatedMaxDiscount = null;
+                $relatedMaxValue = 0;
                 foreach($otherDiscounts as $discountCode) {
                     if($discountCode->discount_type === 'fixed_amount') {
                         $value = $discountCode->discount_value;
                     } elseif($discountCode->discount_type === 'percentage') {
-                        $value = isset($product->min_price) ? ($product->min_price * $discountCode->discount_value / 100) : 0;
+                        $value = isset($relatedProduct->min_price) ? ($relatedProduct->min_price * $discountCode->discount_value / 100) : 0;
                     } else {
                         $value = 0;
                     }
-                    if($value > $maxValue) {
-                        $maxValue = $value;
-                        $maxDiscount = $discountCode;
+                    if($value > $relatedMaxValue) {
+                        $relatedMaxValue = $value;
+                        $relatedMaxDiscount = $discountCode;
                     }
                 }
-                $originPrice = $product->discount_price && $product->base_price > $product->discount_price
-                    ? $product->discount_price
-                    : $product->min_price;
+                $originPrice = $relatedProduct->discount_price && $relatedProduct->base_price > $relatedProduct->discount_price
+                    ? $relatedProduct->discount_price
+                    : $relatedProduct->min_price;
                 $finalPrice = $originPrice;
-                if($maxDiscount) {
-                    if($maxDiscount->discount_type === 'fixed_amount') {
-                        $finalPrice = max(0, $originPrice - $maxDiscount->discount_value);
-                    } elseif($maxDiscount->discount_type === 'percentage') {
-                        $finalPrice = max(0, $originPrice * (1 - $maxDiscount->discount_value / 100));
+                if($relatedMaxDiscount) {
+                    if($relatedMaxDiscount->discount_type === 'fixed_amount') {
+                        $finalPrice = max(0, $originPrice - $relatedMaxDiscount->discount_value);
+                    } elseif($relatedMaxDiscount->discount_type === 'percentage') {
+                        $finalPrice = max(0, $originPrice * (1 - $relatedMaxDiscount->discount_value / 100));
                     }
                 }
             @endphp
-            <div class="product-card bg-white rounded-lg overflow-hidden" data-product-id="{{ $product->id }}">
+            <div class="product-card bg-white rounded-lg overflow-hidden" data-product-id="{{ $relatedProduct->id }}">
                 <div class="relative">
-                    <a href="{{ route('products.show', $product->id) }}" class="block">
-                        @if($product->primary_image)
-                            <img src="{{ $product->primary_image->s3_url }}" alt="{{ $product->name }}" class="product-image">
+                    <a href="{{ route('products.show', $relatedProduct->id) }}" class="block">
+                        @if($relatedProduct->primary_image)
+                            <img src="{{ $relatedProduct->primary_image->s3_url }}" alt="{{ $relatedProduct->name }}" class="product-image">
                         @else
                             <div class="no-image-placeholder">
                                 <i class="far fa-image"></i>
                             </div>
                         @endif
                     </a>
-                    @if($product->discount_price && $product->base_price > $product->discount_price)
+                    @if($relatedProduct->discount_price && $relatedProduct->base_price > $relatedProduct->discount_price)
                         @php
-                            $discountPercent = round((($product->base_price - $product->discount_price) / $product->base_price) * 100);
+                            $discountPercent = round((($relatedProduct->base_price - $relatedProduct->discount_price) / $relatedProduct->base_price) * 100);
                         @endphp
                         <span class="custom-badge badge-sale">-{{ $discountPercent }}%</span>
-                    @elseif($product->created_at->diffInDays(now()) <= 7)
+                    @elseif($relatedProduct->created_at->diffInDays(now()) <= 7)
                         <span class="custom-badge badge-new">Mới</span>
                     @endif
                 </div>
                 <div class="px-4 py-2">
                     <div class="flex items-center justify-between">
-                        <a href="{{ route('products.show', $product->id) }}" class="block">
-                            <h3 class="product-title">{{ $product->name }}</h3>
+                        <a href="{{ route('products.show', $relatedProduct->id) }}" class="block">
+                            <h3 class="product-title">{{ $relatedProduct->name }}</h3>
                         </a>
                     </div>
                     <div>
                         <div class="flex flex-col">
                             <div class="flex justify-between items-center">
                                 <div>
-                                    <span class="product-price">{{ number_format($finalPrice) }}đ</span>
+                                    <span class="product-price">{{ number_format($finalPrice, 0, '', '.') }}đ</span>
                                     @if($finalPrice < $originPrice)
-                                        <span class="product-original-price">{{ number_format($originPrice) }}đ</span>
+                                        <span class="product-original-price">{{ number_format($originPrice, 0, '', '.') }}đ</span>
                                     @endif
                                 </div>
                                 @if($freeship)
@@ -1075,23 +1139,23 @@
                             </div>
                             <div class="discount-tag">
                                 <span class="text-xs font-semibold text-orange-500 mr-2 px-1 py-1 quality">Rẻ vô địch</span>
-                                @if($maxDiscount)
+                                @if($relatedMaxDiscount)
                                     @php
                                         $badgeClass = 'discount-badge';
                                         $icon = 'fa-percent';
-                                        if($maxDiscount->discount_type === 'fixed_amount') {
+                                        if($relatedMaxDiscount->discount_type === 'fixed_amount') {
                                             $badgeClass .= ' fixed-amount';
                                             $icon = 'fa-money-bill-wave';
                                         } else {
                                             $badgeClass .= ' percentage';
                                         }
                                     @endphp
-                                    <div class="{{ $badgeClass }}" title="{{ $maxDiscount->name }}" data-discount-code="{{ $maxDiscount->code }}">
+                                    <div class="{{ $badgeClass }}" title="{{ $relatedMaxDiscount->name }}" data-discount-code="{{ $relatedMaxDiscount->code }}">
                                         <i class="fas {{ $icon }}"></i>
-                                        @if($maxDiscount->discount_type === 'percentage')
-                                            Giảm {{ $maxDiscount->discount_value }}%
-                                        @elseif($maxDiscount->discount_type === 'fixed_amount')
-                                            Giảm {{ number_format($maxDiscount->discount_value) }}đ
+                                        @if($relatedMaxDiscount->discount_type === 'percentage')
+                                            Giảm {{ $relatedMaxDiscount->discount_value }}%
+                                        @elseif($relatedMaxDiscount->discount_type === 'fixed_amount')
+                                            Giảm {{ number_format($relatedMaxDiscount->discount_value, 0, '', '.') }}đ
                                         @endif
                                     </div>
                                 @endif
@@ -1101,7 +1165,7 @@
                     <div class="flex justify-start items-center">
                         <div class="flex items-center mr-4">
                             <i class="fas fa-star text-yellow-400 text-xs"></i>
-                            <span class="commons rating-count ml-1">{{ $product->reviews_count }}</span>
+                            <span class="commons rating-count ml-1">{{ $relatedProduct->reviews_count }}</span>
                         </div>
                         <div class="flex items-center">
                             <span class="commons">Đã bán 46k</span>
@@ -1152,11 +1216,31 @@
     window.csrfToken = '{{ csrf_token() }}';
     window.pusherKey = '{{ config('broadcasting.connections.pusher.key') }}';
     window.pusherCluster = '{{ config('broadcasting.connections.pusher.options.cluster') }}';
-    // Truyền discount tốt nhất sang JS
-    window.bestDiscountCode = @json($maxDiscountCode);
-    window.bestDiscountAmount = {{ $maxDiscountAmount }};
+    window.bestDiscountCode = @json($maxDiscount);
+    window.bestDiscountAmount = {{ $maxValue }};
+    window.variantCombinations = @json(
+        \App\Models\ProductVariant::where('product_id', $product->id)
+            ->with('variantValues')
+            ->get()
+            ->mapWithKeys(function($variant) {
+                $ids = $variant->variantValues->pluck('id')->sort()->values()->toArray();
+                return [implode('_', $ids) => $variant->id];
+            })
+    );
+    window.currentUserId = {{ auth()->check() ? auth()->id() : 'null' }};
+    window.isAdmin = {{ (auth()->user()->is_admin ?? false) ? 'true' : 'false' }};
 </script>
 <script src="{{ asset('js/Customer/Shop/shop.js') }}"></script>
-<script src="{{ asset('js/Customer/discount-updates.js') }}"></script>
 @include('partials.customer.branch-check')
+<script>
+    document.querySelectorAll('.reply-review-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const reviewId = this.getAttribute('data-review-id');
+            const form = document.getElementById('reply-form-' + reviewId);
+            if (form) {
+                form.style.display = (form.style.display === 'none' || form.style.display === '') ? 'block' : 'none';
+            }
+        });
+    });
+</script>
 @endsection
