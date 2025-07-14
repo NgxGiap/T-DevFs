@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
 
 class Order extends Model
@@ -17,7 +18,7 @@ class Order extends Model
         'driver_id',
         'address_id',
         'discount_code_id',
-        'payment_id',
+        'payment_id', // Thêm payment_id vào fillable
         'guest_name',
         'guest_phone',
         'guest_email',
@@ -196,6 +197,29 @@ class Order extends Model
         );
     }
 
+    protected function paymentMethodText(): Attribute
+    {
+        return Attribute::make(
+            get: fn() => match ($this->payment_method) {
+                'cod' => 'COD (Thanh toán khi nhận hàng)',
+                'vnpay' => 'VNPAY',
+                'balance' => 'Số dư tài khoản',
+                default => 'Không xác định',
+            }
+        );
+    }
+
+    /**
+     * Lấy trạng thái thanh toán
+     */
+    protected function paymentStatus(): Attribute
+    {
+        return Attribute::make(
+            get: fn() => $this->payment->payment_status ?? 'pending'
+        );
+    }
+
+
     // --- CẬP NHẬT TẠI ĐÂY ---
 
     // Định nghĩa tĩnh các thuộc tính trạng thái
@@ -204,6 +228,7 @@ class Order extends Model
         'awaiting_driver' => ['text' => 'Chờ tài xế', 'bg' => '#f97316', 'text_color' => '#FFFFFF', 'icon' => 'fas fa-user-clock'],       // Cam -> Nâu đỏ
         'driver_assigned' => ['text' => 'Tài xế đã được giao', 'bg' => '#60a5fa', 'text_color' => '#FFFFFF', 'icon' => 'fas fa-clipboard-check'], // Xanh dương nhạt -> Xanh dương đậm
         'driver_confirmed' => ['text' => 'Tài xế đã xác nhận', 'bg' => '#3b82f6', 'text_color' => '#FFFFFF', 'icon' => 'fas fa-check-circle'], // Xanh dương trung bình -> Xanh đậm
+        'waiting_driver_pick_up' => ['text' => 'Chờ tài xế lấy hàng', 'bg' => '#818cf8', 'text_color' => '#FFFFFF', 'icon' => 'fas fa-shopping-bag'], // Tím nhạt -> Tím đậm
         'driver_picked_up' => ['text' => 'Đã nhận đơn', 'bg' => '#a78bfa', 'text_color' => '#FFFFFF', 'icon' => 'fas fa-shopping-bag'],     // Tím nhạt -> Tím đậm
         'in_transit' => ['text' => 'Đang giao', 'bg' => '#2dd4bf', 'text_color' => '#FFFFFF', 'icon' => 'fas fa-truck'],               // Xanh ngọc lam -> Xanh lá cây đậm
         'delivered' => ['text' => 'Đã giao', 'bg' => '#4ade80', 'text_color' => '#FFFFFF', 'icon' => 'fas fa-check-double'],            // Xanh lá cây nhạt -> Xanh lá cây đậm hơn

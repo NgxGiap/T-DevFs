@@ -86,7 +86,7 @@ class OrderController extends Controller
             }
             // For 'awaiting_driver' tab, we only show unassigned orders
             if ($key === 'awaiting_driver') {
-                $query->whereNull('driver_id');
+                $query->where('driver_id', $driverId);
             }
 
 
@@ -123,15 +123,27 @@ class OrderController extends Controller
             }
             // If the current tab is 'awaiting_driver', ensure driver_id is null
             if ($currentTab === 'awaiting_driver') {
-                $ordersQuery->whereNull('driver_id');
+                $ordersQuery->where('driver_id', $driverId);
             }
         } else {
             // Logic for 'all' tab
-            if ($driverId) {
-                $ordersQuery->where('driver_id', $driverId)
-                    ->orWhereNull('driver_id')
-                    ->whereIn('status', ['awaiting_driver', 'driver_assigned', 'driver_confirmed', 'driver_picked_up', 'in_transit', 'delivered', 'item_received', 'cancelled', 'order_failed']);
-            }
+            $ordersQuery->where(function ($q) use ($driverId) {
+                $q->where('driver_id', $driverId)
+                    ->orWhere(function ($q2) {
+                        $q2->whereNull('driver_id')
+                            ->whereIn('status', [
+                                'awaiting_driver',
+                                'driver_assigned',
+                                'driver_confirmed',
+                                'driver_picked_up',
+                                'in_transit',
+                                'delivered',
+                                'item_received',
+                                'cancelled',
+                                'order_failed'
+                            ]);
+                    });
+            });
         }
 
 
@@ -205,45 +217,90 @@ class OrderController extends Controller
         ]);
     }
 
-    // Khi tài xế nhận đơn:
-    public function accept(Order $order): JsonResponse
+    /**
+     * Tài xế xác nhận nhận đơn (từ trạng thái awaiting_driver -> driver_confirmed)
+     */
+    public function confirm(Order $order): JsonResponse
     {
-        if ($order->status !== 'awaiting_driver' || !is_null($order->driver_id)) {
-            return response()->json(['success' => false, 'message' => 'Đơn hàng này không còn khả dụng.'], 400);
+        if ($order->driver_id !== Auth::guard('driver')->id() || $order->status !== 'awaiting_driver') {
+            return response()->json(['success' => false, 'message' => 'Đơn hàng không khả dụng để xác nhận.'], 400);
         }
 
-        $order->driver_id = Auth::guard('driver')->id();
-        $order->status = 'driver_picked_up'; // Đúng với enum mới
-
-        return $this->processUpdate($order, 'Đã nhận đơn hàng! Đang đến điểm lấy hàng.');
-    }
-
-    // Khi tài xế xác nhận đã lấy hàng:
-    public function confirmPickup(Order $order): JsonResponse
-    {
-        if ($order->driver_id !== Auth::guard('driver')->id() || $order->status !== 'driver_picked_up') {
-            return response()->json(['success' => false, 'message' => 'Hành động không hợp lệ hoặc bạn không có quyền.'], 400);
-        }
-
-        $order->status = 'in_transit';
-
-        return $this->processUpdate($order, 'Đã lấy hàng thành công. Bắt đầu giao!');
+        $order->status = 'driver_confirmed';
+        return $this->processUpdate($order, 'Bạn đã xác nhận nhận đơn. Hãy bắt đầu đến điểm lấy hàng!');
     }
 
     /**
-     * HÀM 3: Tài xế xác nhận đã giao hàng thành công.
-     * Trạng thái chuyển đổi: 'in_transit' -> 'delivered'
+     * Tài xế bắt đầu di chuyển đến điểm lấy hàng (driver_confirmed -> waiting_driver_pick_up)
+     */
+    public function startPickup(Order $order): JsonResponse
+    {
+        if ($order->driver_id !== Auth::guard('driver')->id() || $order->status !== 'driver_confirmed') {
+            return response()->json(['success' => false, 'message' => 'Bạn không thể thực hiện hành động này.'], 400);
+        }
+
+        $order->status = 'waiting_driver_pick_up';
+        return $this->processUpdate($order, 'Bạn đang trên đường đến điểm lấy hàng!');
+    }
+
+    /**
+     * Tài xế xác nhận đã lấy hàng (waiting_driver_pick_up -> driver_picked_up)
+     */
+    public function confirmPickup(Order $order): JsonResponse
+    {
+        if ($order->driver_id !== Auth::guard('driver')->id() || $order->status !== 'waiting_driver_pick_up') {
+            return response()->json(['success' => false, 'message' => 'Bạn không thể thực hiện hành động này.'], 400);
+        }
+
+        $order->status = 'driver_picked_up';
+        return $this->processUpdate($order, 'Bạn đã lấy hàng thành công!');
+    }
+
+    /**
+     * Tài xế bắt đầu giao hàng (driver_picked_up -> in_transit)
+     */
+    public function startDelivery(Order $order): JsonResponse
+    {
+        if ($order->driver_id !== Auth::guard('driver')->id() || $order->status !== 'driver_picked_up') {
+            return response()->json(['success' => false, 'message' => 'Bạn không thể thực hiện hành động này.'], 400);
+        }
+
+        $order->status = 'in_transit';
+        return $this->processUpdate($order, 'Bạn đang giao hàng!');
+    }
+
+    /**
+     * Tài xế xác nhận giao thành công (in_transit -> delivered)
      */
     public function confirmDelivery(Order $order): JsonResponse
     {
-        // Điều kiện: Phải là tài xế của đơn hàng và đơn hàng phải đang được vận chuyển.
         if ($order->driver_id !== Auth::guard('driver')->id() || $order->status !== 'in_transit') {
-            return response()->json(['success' => false, 'message' => 'Hành động không hợp lệ.'], 400);
+            return response()->json(['success' => false, 'message' => 'Bạn không thể thực hiện hành động này.'], 400);
         }
 
         $order->status = 'delivered';
         $order->actual_delivery_time = Carbon::now();
-
         return $this->processUpdate($order, 'Đã giao hàng thành công!');
+    }
+
+    /**
+     * Tài xế từ chối đơn (awaiting_driver)
+     */
+    public function reject(Order $order): JsonResponse
+    {
+        if ($order->driver_id !== Auth::guard('driver')->id() || $order->status !== 'awaiting_driver') {
+            return response()->json(['success' => false, 'message' => 'Bạn không thể từ chối đơn này.'], 400);
+        }
+
+        $order->status = 'cancelled';
+        $order->driver_id = null;
+
+        $order->save();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Bạn đã từ chối đơn hàng.',
+            'redirect_url' => route('driver.dashboard') // ← Đây là đường dẫn về trang tài xế
+        ]);
     }
 }
