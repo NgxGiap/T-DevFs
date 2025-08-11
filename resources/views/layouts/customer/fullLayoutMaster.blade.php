@@ -6,8 +6,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>@yield('title', 'FastFood')</title>
+    <link rel="apple-touch-icon" sizes="180x180" href="{{ asset('/images/logo.png') }}">
+    <link rel="icon" type="image/png" sizes="32x32" href="{{ asset('/images/logo.png') }}">
+    <link rel="icon" type="image/png" sizes="16x16" href="{{ asset('/images/logo.png') }}">
     <script type="module" src="https://unpkg.com/ionicons@7.1.0/dist/ionicons/ionicons.esm.js"></script>
     <script nomodule src="https://unpkg.com/ionicons@7.1.0/dist/ionicons/ionicons.js"></script>
+    <script src="https://animatedicons.co/scripts/embed-animated-icons.js"></script>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -35,6 +39,9 @@
     <!-- Font Awesome for icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swiper/swiper-bundle.min.css" />
+    <!-- Mapbox GL JS -->
+    <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet">
+    <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
     <!-- Notification Styles -->
     <link rel="stylesheet" href="{{ asset('css/customer/app.css') }}">
     <!-- Modal Styles -->
@@ -46,7 +53,8 @@
 
 <body class="min-h-screen">
     <!-- Notification Container -->
-    <div id="notificationContainer" class="fixed top-4 left-1/2 transform -translate-x-1/2 z-50 w-full max-w-md px-4">
+    <div id="notificationContainer"
+        class="fixed top-4 left-1/2 transform -translate-x-1/2 z-[9999] w-full max-w-md px-4">
         @if (session('success'))
             <div class="notification-alert bg-white border-l-4 border-green-500 rounded-lg overflow-hidden mb-4 transition-all duration-300"
                 data-type="success" id="successNotification">
@@ -179,7 +187,7 @@
     <!-- Navbar -->
     @include('partials.customer.header')
     <!-- Main Content -->
-    <main>
+    <main style="background: #f0f0f0;">
         @yield('content')
 
         <!-- Chat Widget -->
@@ -194,11 +202,40 @@
     <script type="module" src="https://unpkg.com/ionicons@5.5.2/dist/ionicons/ionicons.esm.js"></script>
     <script nomodule src="https://unpkg.com/ionicons@5.5.2/dist/ionicons/ionicons.js"></script>
     <script src="{{ asset('js/modal.js') }}"></script>
+    <script src="{{ asset('js/Customer/order-realtime-simple.js') }}"></script>
 
     <script>
         // Function to show notifications programmatically
         function showToast(message, type = 'info', duration = 5000) {
+            console.log('🔔 showToast called:', { message, type, duration });
+            
             const container = document.getElementById('notificationContainer');
+            if (!container) {
+                console.error('❌ notificationContainer not found');
+                // Fallback: create a simple toast
+                const toast = document.createElement('div');
+                toast.style.cssText = `
+                    position: fixed;
+                    top: 20px;
+                    right: 20px;
+                    background: ${type === 'success' ? '#4CAF50' : type === 'error' ? '#f44336' : type === 'warning' ? '#ff9800' : '#2196F3'};
+                    color: white;
+                    padding: 15px;
+                    border-radius: 5px;
+                    z-index: 9999;
+                    max-width: 300px;
+                `;
+                toast.textContent = message;
+                document.body.appendChild(toast);
+                
+                setTimeout(() => {
+                    if (toast.parentNode) {
+                        toast.parentNode.removeChild(toast);
+                    }
+                }, duration);
+                return;
+            }
+            
             const notificationId = 'notification_' + Date.now();
 
             const colors = {
@@ -364,6 +401,17 @@
 
     <!-- Scripts -->
     <script>
+        // Set global user ID for notification system
+        @if (auth()->check())
+            window.currentUserId = {{ auth()->id() }};
+        @else
+            window.currentUserId = null;
+        @endif
+        
+        // Set Pusher configuration for order-realtime-simple.js
+        window.pusherKey = '{{ env('PUSHER_APP_KEY') }}';
+        window.pusherCluster = '{{ env('PUSHER_APP_CLUSTER') }}';
+
         // Global function to update the cart counter
         window.updateCartCount = function(count) {
             // Update all cart counter elements on the page
@@ -392,8 +440,16 @@
         document.addEventListener('DOMContentLoaded', function() {
             // Không dùng localStorage cho cart_count nữa
             // Khi reload trang, nếu có biến cartCountFromServer thì cập nhật luôn
+            // NHƯNG không cập nhật nếu đang ở trang checkout từ buy now
             if (typeof window.cartCountFromServer !== 'undefined') {
+                // Kiểm tra xem có phải đang ở trang checkout từ buy now không
+                const urlParams = new URLSearchParams(window.location.search);
+                const fromBuyNow = urlParams.get('from_buy_now');
+                
+                // Chỉ cập nhật cart count nếu không phải từ buy now
+                if (!fromBuyNow) {
                 window.updateCartCount(window.cartCountFromServer);
+                }
             }
 
             // Set up Pusher if the script is loaded
@@ -406,11 +462,14 @@
                 });
 
                 // Subscribe to cart channel
-                const cartChannel = pusher.subscribe('user-cart-channel.{{ auth()->id() }}');
+                const cartChannel = window.pusher.subscribe('user-cart-channel.{{ auth()->id() }}');
 
-                // Listen for cart updates
+                // Listen for cart updates - chỉ cập nhật khi thực sự thêm vào giỏ hàng
                 cartChannel.bind('cart-updated', function(data) {
+                    // Chỉ cập nhật cart count nếu action là 'add_to_cart', không phải 'buy_now'
+                    if (data.action === 'add_to_cart' || data.action === undefined) {
                     window.updateCartCount(data.count);
+                    }
                 });
             }
         });
@@ -455,13 +514,10 @@
             // Save the wishlist count in localStorage for consistency between pages
             localStorage.setItem('wishlist_count', count);
 
-            // Update all wishlist counter elements on the page
-            const counters = document.querySelectorAll('#wishlist-container span');
+            // Chỉ update đúng counter ở icon tim
+            const counters = document.querySelectorAll('#wishlist-counter');
             counters.forEach(counter => {
-                // Update the counter with animation
                 counter.textContent = count;
-
-                // Add animation class
                 counter.classList.add('animate-bounce', 'bg-green-500');
                 setTimeout(() => {
                     counter.classList.remove('animate-bounce', 'bg-green-500');
@@ -486,20 +542,34 @@
             if (typeof Pusher !== 'undefined' && {{ auth()->check() ? 'true' : 'false' }}) {
                 // This Pusher instance is for layout elements.
                 // Page-specific scripts might have their own or should share this one.
-                const pusher = new Pusher('{{ env('PUSHER_APP_KEY') }}', {
+                window.pusher = new Pusher('{{ env('PUSHER_APP_KEY') }}', {
                     cluster: '{{ env('PUSHER_APP_CLUSTER') }}',
                     encrypted: true,
                     authEndpoint: '/broadcasting/auth',
                     auth: {
                         headers: {
-                            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || ''
+                            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute(
+                                'content') || ''
                         }
                     }
                 });
 
+                // Add Pusher debugging
+                window.pusher.connection.bind('connected', function() {
+                    console.log('✅ Pusher connected successfully');
+                });
+
+                window.pusher.connection.bind('error', function(err) {
+                    console.error('❌ Pusher connection error:', err);
+                });
+
+                window.pusher.connection.bind('disconnected', function() {
+                    console.log('⚠️ Pusher disconnected');
+                });
+
                 // Subscribe to the correct private wishlist channel
                 const channelName = 'private-user-wishlist-channel.{{ auth()->id() }}';
-                const wishlistChannel = pusher.subscribe(channelName);
+                const wishlistChannel = window.pusher.subscribe(channelName);
 
                 // Listen for wishlist updates
                 wishlistChannel.bind('favorite-updated', function(data) {
@@ -514,52 +584,117 @@
                 wishlistChannel.bind('pusher:subscription_error', (error) => {
                     console.error('Layout failed to subscribe to wishlist channel:', channelName, error);
                 });
+
+                // Subscribe to user's private notification channel (Laravel style)
+                const notificationChannel = window.pusher.subscribe('private-App.Models.User.{{ auth()->id() }}');
+
+                // Listen for Laravel's notification broadcast event
+                notificationChannel.bind('Illuminate\\Notifications\\Events\\BroadcastNotificationCreated',
+                    function(data) {
+                        console.log('🔔 Laravel Notification received:', data);
+
+
+
+                        // Gọi hàm có sẵn để fetch lại toàn bộ list noti từ server
+                        if (typeof window.fetchNotifications === 'function') {
+                            window.fetchNotifications();
+                        } else if (typeof fetchNotifications === 'function') {
+                            fetchNotifications();
+                        }
+
+                    // Gọi hiệu ứng rung chuông (nếu có)
+                    if (typeof triggerBellShake === 'function') {
+                        triggerBellShake();
+                    }
+                });
+
+                notificationChannel.bind('pusher:subscription_succeeded', () => {
+                    console.log(
+                        '✅ Subscribed to Laravel notifications channel for user {{ auth()->id() }}');
+                });
+
+                notificationChannel.bind('pusher:subscription_error', (error) => {
+                    console.error('❌ Failed to subscribe to Laravel notifications channel:', error);
+                });
+
+                // Subscribe to custom notification channel (used by custom events)
+                const customNotificationChannel = window.pusher.subscribe('customer.{{ auth()->id() }}.notifications');
+
+                customNotificationChannel.bind('new-message', function(data) {
+
+
+                    if (typeof window.fetchNotifications === 'function') {
+                        window.fetchNotifications();
+                    } else if (typeof fetchNotifications === 'function') {
+                        fetchNotifications();
+                    }
+
+                    if (typeof window.triggerBellShake === 'function') {
+                        window.triggerBellShake();
+                    } else if (typeof triggerBellShake === 'function') {
+                        triggerBellShake();
+                    }
+                });
+
+                customNotificationChannel.bind('pusher:subscription_succeeded', () => {
+                    console.log(
+                        '✅ Subscribed to custom notifications channel for user {{ auth()->id() }}');
+                });
+
+                customNotificationChannel.bind('pusher:subscription_error', (error) => {
+                    console.error('❌ Failed to subscribe to custom notifications channel:', error);
+                });
+
+                // Order status updates are now handled by order-realtime-simple.js
             }
         });
     </script>
     @include('components.modal')
 
-    @if(isset($cartItems))
+    @if (isset($cartItems) && !request()->has('from_buy_now'))
     <script>
         window.cartCountFromServer = {{ count($cartItems) }};
     </script>
     @endif
 
     <script>
-function getCsrfToken() {
-    return document.querySelector('meta[name="csrf-token"]').getAttribute('content');
-}
-function updateCsrfToken(newToken) {
-    document.querySelector('meta[name="csrf-token"]').setAttribute('content', newToken);
-    if (window.jQuery) {
-        $.ajaxSetup({ headers: { 'X-CSRF-TOKEN': newToken } });
+        document.addEventListener('DOMContentLoaded', function() {
+            // Nếu không đăng nhập thì reset số tim về 0 và xóa localStorage
+            if (!{{ auth()->check() ? 'true' : 'false' }}) {
+                window.updateWishlistCount(0);
+                localStorage.removeItem('wishlist_count');
+            }
+        });
+
+        // Order notification functions are now handled by order-realtime-simple.js
+
+        // Giữ lại các hàm cũ để tương thích ngược
+        function getCsrfToken() {
+            return document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+        }
+
+        function updateCsrfToken(newToken) {
+            document.querySelector('meta[name="csrf-token"]').setAttribute('content', newToken);
+            if (window.jQuery) {
+                $.ajaxSetup({
+                    headers: {
+                        'X-CSRF-TOKEN': newToken
+                    }
+                });
     }
     if (window.axios) {
         window.axios.defaults.headers.common['X-CSRF-TOKEN'] = newToken;
     }
 }
-$(document).ajaxError(function(event, jqxhr, settings, thrownError) {
-    if (jqxhr.status === 419) {
-        fetch('/refresh-csrf')
-            .then(res => res.json())
-            .then(data => {
-                updateCsrfToken(data.csrf_token);
-                // Có thể gửi lại request ở đây nếu muốn
-            });
-    }
-});
-if (window.axios) {
-    window.axios.interceptors.response.use(null, async function(error) {
-        if (error.response && error.response.status === 419) {
-            const res = await fetch('/refresh-csrf');
-            const data = await res.json();
-            updateCsrfToken(data.csrf_token);
-            // Có thể gửi lại request ở đây nếu muốn
-        }
-        return Promise.reject(error);
-    });
-}
 </script>
+
+    {{-- Thêm component CSRF Auto-Refresh --}}
+    @include('partials.csrf-refresh')
+    
+    {{-- Thêm script xử lý thông báo realtime --}}
+    <script src="{{ asset('js/Customer/notification-handler.js') }}"></script>
+{{-- Thêm component CSRF Auto-Refresh --}}
+@include('partials.csrf-refresh')
 </body>
 
 </html>

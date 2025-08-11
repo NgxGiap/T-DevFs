@@ -32,6 +32,15 @@ Broadcast::channel('App.Models.User.{id}', function ($user, $id) {
     return (int) $user->id === (int) $id;
 });
 
+// Branch notifications channel
+Broadcast::channel('App.Models.Branch.{id}', function ($user, $id) {
+    // Check if user belongs to this branch
+    if ($user->branch && $user->branch->id === (int) $id) {
+        return ['id' => $user->id, 'name' => $user->full_name];
+    }
+    return false;
+});
+
 // Chat conversation channel
 Broadcast::channel('chat.{conversationId}', function ($user, $conversationId) {
     $conversation = Conversation::find($conversationId);
@@ -209,4 +218,21 @@ Broadcast::channel('branch.{branchId}.orders', function ($user, $branchId) {
 Broadcast::channel('branch-orders-channel', function ($user = null) {
     // Allow all authenticated users to listen to general order updates
     return true;
+});
+
+// Admin orders channel for real-time updates
+Broadcast::channel('admin-orders-channel', function ($user = null) {
+    // Allow all authenticated users to listen to admin order updates
+    // Admin cần nhận tất cả cập nhật đơn hàng từ mọi chi nhánh
+    return true;
+});
+
+// Customer orders channel for order status updates
+Broadcast::channel('customer.{customerId}.orders', function ($user, $customerId) {
+    // Only the authenticated customer with the matching ID can listen to their order updates
+    return $user instanceof User && (int) $user->id === (int) $customerId ? [
+        'id' => $user->id,
+        'name' => $user->full_name ?? $user->name ?? 'Customer',
+        'role' => $user->role ?? 'customer',
+    ] : false;
 });

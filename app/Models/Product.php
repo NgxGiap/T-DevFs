@@ -21,6 +21,7 @@ class Product extends Model
         'status',
         'release_at',
         'is_featured',
+        'slug',
         'created_by',
         'updated_by'
     ];
@@ -32,6 +33,36 @@ class Product extends Model
         'base_price' => 'decimal:2',
         'discount_price' => 'decimal:2'
     ];
+
+    protected static function boot()
+    {
+        parent::boot();
+
+        static::creating(function ($product) {
+            if (empty($product->slug) && !empty($product->name)) {
+                $slug = Str::slug($product->name);
+                $originalSlug = $slug;
+                $i = 1;
+                // Ensure unique slug
+                while (static::where('slug', $slug)->exists()) {
+                    $slug = $originalSlug . '-' . $i++;
+                }
+                $product->slug = $slug;
+            }
+        });
+        static::updating(function ($product) {
+            if (empty($product->slug) && !empty($product->name)) {
+                $slug = Str::slug($product->name);
+                $originalSlug = $slug;
+                $i = 1;
+                // Ensure unique slug
+                while (static::where('slug', $slug)->where('id', '!=', $product->id)->exists()) {
+                    $slug = $originalSlug . '-' . $i++;
+                }
+                $product->slug = $slug;
+            }
+        });
+    }
 
     public function category()
     {
@@ -86,6 +117,18 @@ class Product extends Model
             ->withTimestamps();
     }
 
+    public function combos()
+    {
+        return $this->belongsToMany(Combo::class, 'combo_items', 'product_variant_id', 'combo_id')
+            ->using(\App\Models\ComboItem::class)
+            ->withPivot('quantity')
+            ->withTimestamps()
+            ->where('combos.status', 'selling')
+            ->join('product_variants', 'product_variants.id', '=', 'combo_items.product_variant_id')
+            ->where('product_variants.product_id', $this->id)
+            ->select('combos.*');
+    }
+
     public function isActiveInBranch($branchId)
     {
         // Kiểm tra xem sản phẩm có variant nào được áp dụng tại chi nhánh này không
@@ -105,5 +148,13 @@ class Product extends Model
     public function primaryImage()
     {
         return $this->hasOne(ProductImg::class, 'product_id')->where('is_primary', true);
+    }
+
+    /**
+     * Alias for images() relationship for backward compatibility
+     */
+    public function productImages()
+    {
+        return $this->images();
     }
 }

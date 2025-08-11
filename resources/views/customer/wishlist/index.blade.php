@@ -1,14 +1,14 @@
+@php
+use Illuminate\Support\Facades\Storage;
+@endphp
+
 @extends('layouts.customer.fullLayoutMaster')
 
 @section('title', 'FastFood - Danh Sách Yêu Thích')
 
 @section('content')
+<x-customer-container>
 <style>
-    .container {
-        max-width: 1280px;
-        margin: 0 auto;
-    }
-    
     .wishlist-item {
         transition: all 0.3s ease;
     }
@@ -101,15 +101,15 @@
     <div class="wishlist-stats rounded-xl p-6 mb-8 text-white">
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div class="text-center">
-                <div class="text-3xl font-bold mb-1" id="total-items">12</div>
+                <div class="text-3xl font-bold mb-1" id="total-items">{{ $stats['total_items'] ?? 0 }}</div>
                 <div class="text-orange-100">Món yêu thích</div>
             </div>
             <div class="text-center">
-                <div class="text-3xl font-bold mb-1" id="total-value">1.250.000đ</div>
+                <div class="text-3xl font-bold mb-1" id="total-value">{{ $stats['total_value'] ?? '0đ' }}</div>
                 <div class="text-orange-100">Tổng giá trị</div>
             </div>
             <div class="text-center">
-                <div class="text-3xl font-bold mb-1" id="categories-count">5</div>
+                <div class="text-3xl font-bold mb-1" id="categories-count">{{ $stats['categories_count'] ?? 0 }}</div>
                 <div class="text-orange-100">Danh mục</div>
             </div>
         </div>
@@ -158,30 +158,48 @@
     <div id="wishlist-container">
         <div id="grid-view" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
             @forelse($wishlistItems as $item)
+                @php
+                    if ($item->product) {
+                        $isCombo = $item->product instanceof \App\Models\Combo;
+                        $image = $isCombo
+                            ? ($item->product->image_url ?? asset('images/default-combo.png'))
+                            : (
+                                $item->product->images->where('is_primary', true)->first()
+                                    ? Storage::disk('s3')->url($item->product->images->where('is_primary', true)->first()->img)
+                                    : '/placeholder.svg?height=400&width=400'
+                            );
+                        $name = $item->product->name;
+                        $slug = $item->product->slug;
+                        $url = $isCombo ? route('combos.show', $slug) : route('products.show', $slug);
+                    } elseif ($item->combo) {
+                        $image = $item->combo->image_url ?? asset('images/default-combo.png');
+                        $name = $item->combo->name;
+                        $slug = $item->combo->slug;
+                        $url = route('combos.show', $slug);
+                    } else {
+                        $image = '/placeholder.svg?height=400&width=400';
+                        $name = 'Không xác định';
+                        $url = '#';
+                    }
+                @endphp
                 <div class="wishlist-item bg-white rounded-lg overflow-hidden shadow-md" 
-                    data-category="{{ $item->product->category->name ?? 'other' }}" 
-                    data-price="{{ $item->productVariant ? $item->product->base_price + $item->productVariant->variantValues->sum('price_adjustment') : $item->product->base_price }}"
-                    data-name="{{ $item->product->name }}"
+                    data-category="{{ $item->product->category->name ?? ($item->combo ? 'Combo' : 'other') }}" 
+                    data-price="{{ $item->product->base_price ?? $item->combo->price ?? 0 }}"
+                    data-name="{{ $name }}"
                     data-date="{{ $item->added_at ? $item->added_at->toDateString() : '' }}"
-                    data-wishlist-id="{{ $item->id }}">
+                    data-product-id="{{ $item->product->id ?? $item->combo->id ?? '' }}"
+                    data-variant-values="{{ json_encode($item->variant_values ?? []) }}">
                     <div class="relative">
-                        <a href="{{ route('products.show', $item->product->id) }}" class="block relative h-48 overflow-hidden">
-                            @php
-                                $image = $item->productVariant && $item->productVariant->image 
-                                    ? asset('storage/' . $item->productVariant->image)
-                                    : ($item->product->images->where('is_primary', true)->first() 
-                                        ? asset('storage/' . $item->product->images->where('is_primary', true)->first()->img)
-                                        : '/placeholder.svg?height=400&width=400');
-                            @endphp
-                            <img src="{{ $image }}" alt="{{ $item->product->name }}" class="object-cover w-full h-full group-hover:scale-110 transition-transform duration-300">
+                        <a href="{{ $url }}" class="block relative h-48 overflow-hidden">
+                            <img src="{{ $image }}" alt="{{ $name }}" class="object-cover w-full h-full group-hover:scale-110 transition-transform duration-300">
                         </a>
                         
                         <button class="absolute top-3 right-3 w-8 h-8 bg-white rounded-full flex items-center justify-center shadow-md heart-icon active" 
-                                data-wishlist-id="{{ $item->id }}">
+                                data-product-id="{{ $item->product->id ?? $item->combo->id ?? '' }}">
                             <i class="fas fa-heart text-sm"></i>
                         </button>
                         
-                        @if($item->product->created_at->diffInDays() <= 7)
+                        @if(($item->product && $item->product->created_at && $item->product->created_at->diffInDays() <= 7) || ($item->combo && $item->combo->created_at && $item->combo->created_at->diffInDays() <= 7))
                             <div class="absolute top-3 left-3">
                                 <span class="bg-green-500 text-white text-xs px-2 py-1 rounded-full">Mới</span>
                             </div>
@@ -191,7 +209,16 @@
                     <div class="p-4">
                         <div class="flex items-center gap-1 mb-2">
                             @php
-                                $averageRating = $item->product->reviews->avg('rating') ?? 0;
+                                if ($item->product && $item->product->reviews) {
+                                    $averageRating = $item->product->reviews->avg('rating') ?? 0;
+                                    $reviewCount = $item->product->reviews->count();
+                                } elseif ($item->combo && $item->combo->reviews) {
+                                    $averageRating = $item->combo->reviews->avg('rating') ?? 0;
+                                    $reviewCount = $item->combo->reviews->count();
+                                } else {
+                                    $averageRating = 0;
+                                    $reviewCount = 0;
+                                }
                             @endphp
                             @for($i = 1; $i <= 5; $i++)
                                 @if($i <= floor($averageRating))
@@ -202,26 +229,38 @@
                                     <i class="far fa-star text-yellow-400"></i>
                                 @endif
                             @endfor
-                            <span class="text-xs text-gray-500 ml-1">({{ $item->product->reviews->count() }})</span>
+                            <span class="text-xs text-gray-500 ml-1">({{ $reviewCount }})</span>
                         </div>
 
-                        <a href="{{ route('products.show', $item->product->id) }}">
+                        <a href="{{ $url }}">
                             <h3 class="font-medium text-lg mb-1 hover:text-orange-500 transition-colors line-clamp-1">
-                                {{ $item->product->name }}
+                                {{ $name }}
                             </h3>
                         </a>
 
                         <p class="text-gray-500 text-sm mb-3 line-clamp-2">
-                            {{ $item->product->short_description ?? Str::limit($item->product->description, 80) }}
+                            @if($item->product)
+                                {{ $item->product->short_description ?? Str::limit($item->product->description, 80) }}
+                            @elseif($item->combo)
+                                {{ Str::limit($item->combo->description, 80) }}
+                            @else
+                                Không có mô tả
+                            @endif
                         </p>
 
                         <div class="flex items-center justify-between mb-3">
                             <div class="flex items-center gap-2">
                                 <span class="font-bold text-lg text-orange-500">
-                                    {{ number_format($item->productVariant ? $item->product->base_price + $item->productVariant->variantValues->sum('price_adjustment') : $item->product->base_price, 0, ',', '.') }}₫
+                                    @if($item->product)
+                                        {{ number_format($item->product->discount_price ?? $item->product->base_price, 0, ',', '.') }}₫
+                                    @elseif($item->combo)
+                                        {{ number_format($item->combo->price ?? 0, 0, ',', '.') }}₫
+                                    @else
+                                        Liên hệ
+                                    @endif
                                 </span>
                             </div>
-                            <span class="text-xs text-gray-400">Đã lưu: {{ $item->added_at ? $item->added_at->diffForHumans() : 'N/A' }}</span>
+                            <span class="text-xs text-gray-400">Đã lưu: {{ $item->created_at ? $item->created_at->diffForHumans() : 'N/A' }}</span>
                         </div>
 
                         <div class="product-actions flex gap-2">
@@ -330,7 +369,7 @@
             <!-- More recommendation items... -->
         </div>
     </section>
-</div>
+</x-customer-container>
 @endsection
 
 @section('scripts')
@@ -351,14 +390,15 @@ document.addEventListener('DOMContentLoaded', function() {
         heart.addEventListener('click', function(e) {
             e.preventDefault();
             e.stopPropagation();
-            const wishlistId = this.dataset.wishlistId;
-            if (!wishlistId) return;
-            fetch(`/wishlist/${wishlistId}`, {
+            const productId = this.dataset.productId;
+            if (!productId) return;
+            fetch('/wishlist', {
                 method: 'DELETE',
                 headers: {
                     'Content-Type': 'application/json',
                     'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
                 },
+                body: JSON.stringify({ product_id: productId })
             })
             .then(response => response.json())
             .then(data => {
@@ -369,12 +409,12 @@ document.addEventListener('DOMContentLoaded', function() {
                     wishlistItem.remove();
                     updateWishlistStats();
                     checkEmptyState();
-                    showNotification(data.message, 'success');
+                    if (window.dtmodalShowToast) dtmodalShowToast('success', { title: 'Thành công', message: data.message });
                 }, 300);
             })
             .catch(error => {
                 console.error('Error:', error);
-                showNotification('Có lỗi xảy ra, vui lòng thử lại!', 'error');
+                if (window.dtmodalShowToast) dtmodalShowToast('error', { title: 'Lỗi', message: 'Có lỗi xảy ra, vui lòng thử lại!' });
             });
         });
     });
@@ -412,10 +452,47 @@ document.addEventListener('DOMContentLoaded', function() {
     document.querySelectorAll('button:has(.fa-shopping-cart)').forEach(btn => {
         btn.addEventListener('click', function(e) {
             e.preventDefault();
-            
-            const productName = this.closest('.wishlist-item').querySelector('h3').textContent;
-            showNotification(`Đã thêm "${productName}" vào giỏ hàng`, 'success');
-            
+            const wishlistItem = this.closest('.wishlist-item');
+            const productId = wishlistItem.dataset.productId;
+            // Lấy variant_values từ data-variant-values nếu có, ngược lại để []
+            let variantValues = [];
+            if (wishlistItem.dataset.variantValues) {
+                try {
+                    variantValues = JSON.parse(wishlistItem.dataset.variantValues);
+                    if (!Array.isArray(variantValues)) variantValues = [];
+                } catch (err) {
+                    variantValues = [];
+                }
+            }
+            // Lấy branch_id từ window.currentBranchId hoặc mặc định 1
+            const branchId = window.currentBranchId || 1;
+            const quantity = 1;
+
+            fetch('/cart/add', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
+                },
+                body: JSON.stringify({
+                    product_id: productId,
+                    variant_values: variantValues,
+                    branch_id: branchId,
+                    quantity: quantity
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    if (window.dtmodalShowToast) dtmodalShowToast('success', { title: 'Thành công', message: data.message });
+                } else {
+                    if (window.dtmodalShowToast) dtmodalShowToast('error', { title: 'Lỗi', message: data.message || 'Không thể thêm vào giỏ hàng' });
+                }
+            })
+            .catch(error => {
+                if (window.dtmodalShowToast) dtmodalShowToast('error', { title: 'Lỗi', message: 'Có lỗi xảy ra, vui lòng thử lại!' });
+            });
+
             // Add cart animation
             this.style.transform = 'scale(0.95)';
             setTimeout(() => {
@@ -428,7 +505,7 @@ document.addEventListener('DOMContentLoaded', function() {
     document.querySelector('button[title="Thêm tất cả vào giỏ hàng"]').addEventListener('click', function() {
         const visibleItems = document.querySelectorAll('.wishlist-item:not(.hidden)');
         if (visibleItems.length > 0) {
-            showNotification(`Đã thêm ${visibleItems.length} món vào giỏ hàng`, 'success');
+            if (window.dtmodalShowToast) dtmodalShowToast('success', { title: 'Thành công', message: `Đã thêm ${visibleItems.length} món vào giỏ hàng` });
         }
     });
 
@@ -448,7 +525,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     }, 300);
                 }, index * 100);
             });
-            showNotification('Đã xóa tất cả khỏi danh sách yêu thích', 'success');
+            if (window.dtmodalShowToast) dtmodalShowToast('success', { title: 'Thành công', message: 'Đã xóa tất cả khỏi danh sách yêu thích' });
         }
     });
 
@@ -525,30 +602,6 @@ document.addEventListener('DOMContentLoaded', function() {
             wishlistContainer.classList.remove('hidden');
             emptyWishlist.classList.add('hidden');
         }
-    }
-
-    function showNotification(message, type = 'info') {
-        // Create notification element
-        const notification = document.createElement('div');
-        notification.className = `fixed top-4 right-4 z-50 px-6 py-3 rounded-lg shadow-lg text-white transform translate-x-full transition-transform duration-300 ${
-            type === 'success' ? 'bg-green-500' : 'bg-blue-500'
-        }`;
-        notification.textContent = message;
-        
-        document.body.appendChild(notification);
-        
-        // Show notification
-        setTimeout(() => {
-            notification.style.transform = 'translateX(0)';
-        }, 100);
-        
-        // Hide notification
-        setTimeout(() => {
-            notification.style.transform = 'translateX(100%)';
-            setTimeout(() => {
-                document.body.removeChild(notification);
-            }, 300);
-        }, 3000);
     }
 
     // Initialize stats

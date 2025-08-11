@@ -26,6 +26,7 @@ use Illuminate\Support\Str;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use App\Models\ComboBranchStock;
 
 class FastFoodSeeder extends Seeder
 {
@@ -387,6 +388,7 @@ class FastFoodSeeder extends Seeder
                 $product = Product::create([
                     'category_id' => $category->id,
                     'name' => $productName,
+                    'slug' => Str::slug($productName),
                     'sku' => $this->generateSku($category->name, 'product'),
                     'description' => $description,
                     'short_description' => $shortDescription,
@@ -423,31 +425,29 @@ class FastFoodSeeder extends Seeder
             // Tạo các giá trị size riêng biệt cho từng sản phẩm
             $sizeValues = $this->getProductSizeValues($product);
             foreach ($sizeValues as $valueData) {
-                // Tạo VariantValue riêng biệt cho mỗi sản phẩm bằng cách thêm product_id vào value
-                $uniqueValue = $valueData['name'] . ' - ' . $product->name;
+                // Tạo VariantValue với tên ngắn gọn, chỉ giữ tên thuộc tính
                 $variantValue = VariantValue::create([
                     'variant_attribute_id' => $sizeAttribute->id,
-                    'value' => $uniqueValue,
+                    'value' => $valueData['name'], // Chỉ sử dụng tên thuộc tính, không ghép tên sản phẩm
                     'price_adjustment' => $valueData['price_adjustment']
                 ]);
                 
                 $this->globalVariantValues[$product->id]['size'][] = $variantValue->id;
-                echo "Created Size Value: {$uniqueValue} (ID: {$variantValue->id}) for {$product->name}\n";
+                echo "Created Size Value: {$valueData['name']} (ID: {$variantValue->id}) for {$product->name}\n";
             }
             
             // Tạo các giá trị vị riêng biệt cho từng sản phẩm
             $flavorValues = $this->getProductFlavorValues($product);
             foreach ($flavorValues as $valueData) {
-                // Tạo VariantValue riêng biệt cho mỗi sản phẩm bằng cách thêm product_id vào value
-                $uniqueValue = $valueData['name'] . ' - ' . $product->name;
+                // Tạo VariantValue với tên ngắn gọn, chỉ giữ tên thuộc tính
                 $variantValue = VariantValue::create([
                     'variant_attribute_id' => $flavorAttribute->id,
-                    'value' => $uniqueValue,
+                    'value' => $valueData['name'], // Chỉ sử dụng tên thuộc tính, không ghép tên sản phẩm
                     'price_adjustment' => $valueData['price_adjustment']
                 ]);
                 
                 $this->globalVariantValues[$product->id]['flavor'][] = $variantValue->id;
-                echo "Created Flavor Value: {$uniqueValue} (ID: {$variantValue->id}) for {$product->name}\n";
+                echo "Created Flavor Value: {$valueData['name']} (ID: {$variantValue->id}) for {$product->name}\n";
             }
         }
     }
@@ -459,15 +459,15 @@ class FastFoodSeeder extends Seeder
         switch ($categoryName) {
             case 'Burger':
                 return [
-                    ['name' => 'Size S', 'price_adjustment' => 0],
-                    ['name' => 'Size M', 'price_adjustment' => 10000],
-                    ['name' => 'Size L', 'price_adjustment' => 20000],
+                    ['name' => 'S', 'price_adjustment' => 0],
+                    ['name' => 'M', 'price_adjustment' => 10000],
+                    ['name' => 'L', 'price_adjustment' => 20000],
                 ];
             case 'Pizza':
                 return [
-                    ['name' => '6 inch', 'price_adjustment' => 0],
-                    ['name' => '9 inch', 'price_adjustment' => 25000],
-                    ['name' => '12 inch', 'price_adjustment' => 50000],
+                    ['name' => '6in', 'price_adjustment' => 0],
+                    ['name' => '9in', 'price_adjustment' => 25000],
+                    ['name' => '12in', 'price_adjustment' => 50000],
                 ];
             case 'Gà Rán':
                 return [
@@ -489,9 +489,9 @@ class FastFoodSeeder extends Seeder
                 ];
             case 'Đồ Uống':
                 return [
-                    ['name' => 'Size S', 'price_adjustment' => 0],
-                    ['name' => 'Size M', 'price_adjustment' => 5000],
-                    ['name' => 'Size L', 'price_adjustment' => 10000],
+                    ['name' => 'S', 'price_adjustment' => 0],
+                    ['name' => 'M', 'price_adjustment' => 5000],
+                    ['name' => 'L', 'price_adjustment' => 10000],
                 ];
             default:
                 return [
@@ -715,6 +715,7 @@ class FastFoodSeeder extends Seeder
             $combo = Combo::create([
                 'sku' => $this->generateSku('', 'combo'),
                 'name' => $comboData['name'],
+                'slug' => Str::slug($comboData['name']),
                 'description' => $comboData['description'],
                 'original_price' => $comboData['original_price'],
                 'price' => $comboData['price'],
@@ -774,6 +775,25 @@ class FastFoodSeeder extends Seeder
             }
         }
         echo "Created {$branchStocksCreated} branch stock entries\n";
+        
+        // Tạo combo branch stocks
+        $comboBranchStocksCreated = 0;
+        $combos = Combo::all();
+        foreach ($this->branches as $branch) {
+            foreach ($combos as $combo) {
+                ComboBranchStock::updateOrCreate(
+                    [
+                        'branch_id' => $branch->id,
+                        'combo_id' => $combo->id
+                    ],
+                    [
+                        'quantity' => rand(20, 100)
+                    ]
+                );
+                $comboBranchStocksCreated++;
+            }
+        }
+        echo "Created {$comboBranchStocksCreated} combo branch stock entries\n";
     }
 
     private function createProductToppings()

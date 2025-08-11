@@ -22,8 +22,12 @@ use App\Http\Middleware\Customer\CartCountMiddleware;
 use App\Http\Controllers\FirebaseConfigController;
 use App\Http\Controllers\Admin\HiringController;
 use App\Http\Controllers\Customer\Auth\RegisterController;
+use App\Http\Controllers\Customer\NotificationController;
+use Illuminate\Support\Str;
 use App\Http\Controllers\Customer\OrderController as CustomerOrderController;
 use Illuminate\Support\Facades\Broadcast;
+use App\Http\Controllers\Customer\AddressController as CustomerAddressController;
+use App\Http\Controllers\Customer\DriverRatingController;
 use App\Http\Controllers\Customer\ReviewReplyController;
 
 // API Controllers for Customer
@@ -42,20 +46,22 @@ Route::middleware([CartCountMiddleware::class, 'phone.required'])->group(functio
 
     // Product
     Route::get('/shop/products', [CustomerProductController::class, 'index'])->name('products.index');
-    Route::get('/shop/products/{id}', [CustomerProductController::class, 'show'])->name('products.show');
-    Route::get('/shop/combos/{id}', [CustomerProductController::class, 'showComboDetail'])->name('combos.show');
+    Route::get('/shop/products/{slug}', [CustomerProductController::class, 'show'])->name('products.show');
+    Route::get('/shop/combos/{slug}', [CustomerProductController::class, 'showComboDetail'])->name('combos.show');
     Route::post('/products/get-applicable-discounts', [CustomerProductController::class, 'getApplicableDiscounts'])->name('products.get-applicable-discounts');
 
     // Wishlist
     Route::get('/wishlist', [CustomerWishlistController::class, 'index'])->name('wishlist.index');
     Route::post('/wishlist', [CustomerWishlistController::class, 'store'])->name('wishlist.store');
-    Route::delete('/wishlist/{id}', [CustomerWishlistController::class, 'destroy'])->name('wishlist.destroy');
+    Route::delete('/wishlist', [CustomerWishlistController::class, 'destroy'])->name('wishlist.destroy');
 
     // Cart
     Route::get('/cart', [CustomerCartController::class, 'index'])->name('cart.index');
     Route::post('/cart/add', [CustomerCartController::class, 'addToCart'])->name('cart.add');
+    Route::post('/cart/add-combo', [CustomerCartController::class, 'addComboToCart'])->name('cart.addCombo');
     Route::post('/cart/update', [CustomerCartController::class, 'update'])->name('cart.update');
     Route::post('/cart/remove', [CustomerCartController::class, 'remove'])->name('cart.remove');
+    Route::post('/cart/clear', [CustomerCartController::class, 'clear'])->name('cart.clear');
 
     // Coupon
     Route::post('/coupon/apply', [CustomerCouponController::class, 'apply'])->name('coupon.apply');
@@ -65,6 +71,10 @@ Route::middleware([CartCountMiddleware::class, 'phone.required'])->group(functio
     Route::get('/checkout', [CustomerCheckoutController::class, 'index'])->name('checkout.index');
     Route::post('/checkout/process', [CustomerCheckoutController::class, 'process'])->name('checkout.process');
     Route::get('/checkout/success', [CustomerCheckoutController::class, 'success'])->name('checkout.success');
+    Route::get('/checkout/continue-payment/{order}', [CustomerCheckoutController::class, 'continuePayment'])->name('checkout.continuePayment');
+    // --- Thêm route cho Mua ngay ---
+    Route::post('/checkout/combo-buy-now', [CustomerCheckoutController::class, 'comboBuyNow'])->name('checkout.comboBuyNow');
+    Route::post('/checkout/product-buy-now', [CustomerCheckoutController::class, 'productBuyNow'])->name('checkout.productBuyNow');
 
     // About, Contact, Promotion, Branches, Support
     Route::get('/about', [CustomerAboutController::class, 'index'])->name('about.index');
@@ -109,6 +119,12 @@ Route::middleware(['auth', 'phone.required'])->group(function () {
     Route::delete('/review-replies/{reply}', [ReviewReplyController::class, 'destroy'])->name('review-replies.destroy');
     Route::post('/reviews/{id}/helpful', [CustomerProductController::class, 'markHelpful'])->name('reviews.helpful');
     Route::delete('/reviews/{id}/helpful', [CustomerProductController::class, 'unmarkHelpful'])->name('reviews.unhelpful');
+    Route::post('/reviews/{id}/report', [CustomerProductController::class, 'reportReview'])->name('reviews.report');
+    
+    // Driver Rating routes
+    Route::get('/orders/{order}/rate-driver', [DriverRatingController::class, 'showRatingForm'])->name('driver.rating.show');
+    Route::post('/orders/{order}/rate-driver', [DriverRatingController::class, 'submitRating'])->name('driver.rating.submit');
+    
     // Route để hiển thị trang "Tất cả đơn hàng"
     Route::get('/orders', [CustomerOrderController::class, 'index'])->name('customer.orders.index');
 
@@ -116,10 +132,14 @@ Route::middleware(['auth', 'phone.required'])->group(function () {
     Route::get('/orders/{order}', [CustomerOrderController::class, 'show'])->name('customer.orders.show');
     Route::post('/orders/{order}/status', [CustomerOrderController::class, 'updateStatus'])->name('customer.orders.updateStatus');
     Route::get('/orders/list', [CustomerOrderController::class, 'listPartial'])->name('customer.orders.listPartial');
-    Route::get('/profile/addresses', [CustomerProfileController::class, 'getAddresses'])->name('customer.profile.addresses');
+    Route::get('/profile/addresses', [CustomerProfileController::class, 'getAddresses'])->name('customer.profile.addresses.index');
     Route::post('/profile/addresses', [CustomerProfileController::class, 'storeAddress'])->name('customer.profile.addresses.store');
     Route::put('/profile/addresses/{id}', [CustomerProfileController::class, 'updateAddress'])->name('customer.profile.addresses.update');
     Route::delete('/profile/addresses/{id}', [CustomerProfileController::class, 'deleteAddress'])->name('customer.profile.addresses.delete');
+    
+    // Address Controller routes (alternative endpoints)
+    Route::post('/addresses', [CustomerAddressController::class, 'store'])->name('customer.addresses.store');
+    Route::put('/addresses/{id}', [CustomerAddressController::class, 'update'])->name('customer.addresses.update');
 });
 
 // Phone Required routes (không cần phone.required middleware)
@@ -167,6 +187,10 @@ Route::prefix('customer')->middleware(['auth'])->group(function () {
     Route::post('/chat/send', [ChatController::class, 'sendMessage'])->name('customer.chat.send');
     Route::get('/chat/conversations', [ChatController::class, 'getConversations'])->name('customer.chat.conversations');
     Route::get('/chat/messages', [ChatController::class, 'getMessages'])->name('customer.chat.messages');
+    Route::post('/chat/typing', [ChatController::class, 'typingIndicator'])->name('customer.chat.typing');
+
+    Route::get('notifications', [NotificationController::class, 'index'])->name('notifications.index');
+    Route::post('notifications/{id}/read', [NotificationController::class, 'markAsRead'])->name('notifications.read');
 
 
     Route::post('/broadcasting/auth', function (\Illuminate\Http\Request $request) {
@@ -178,3 +202,12 @@ Route::prefix('customer')->middleware(['auth'])->group(function () {
 Route::get('/track', [CustomerOrderController::class, 'showTrackingForm'])->name('customer.order.track.form');
 Route::post('/track', [CustomerOrderController::class, 'orderTrackingForGuest'])->name('customer.order.track.submit');
 Route::get('/track/{order_code}', [CustomerOrderController::class, 'orderTrackingForGuest'])->name('customer.order.track');
+
+// Route test để debug products
+Route::get('/debug-products', function() {
+    $products = \App\Models\Product::select('id', 'name', 'slug')->get();
+    return response()->json([
+        'total' => $products->count(),
+        'products' => $products->toArray()
+    ]);
+});

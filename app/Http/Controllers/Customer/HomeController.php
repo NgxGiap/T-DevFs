@@ -66,9 +66,7 @@ class HomeController extends Controller
             'images' => function($query) {
                 $query->orderBy('is_primary', 'desc');
             },
-            'reviews' => function($query) {
-                $query->where('approved', true);
-            },
+            'reviews' => function($query) { $query; },
             'variants.branchStocks' => function($query) use ($selectedBranchId) {
                 if ($selectedBranchId) {
                     $query->where('branch_id', $selectedBranchId);
@@ -190,7 +188,7 @@ class HomeController extends Controller
             });
         }
 
-        $featuredCombos = $featuredCombos->take(4)->get();
+        $featuredCombos = $featuredCombos->take(6)->get();
 
         // Transform combos để thêm thông tin cần thiết
         $featuredCombos->transform(function ($combo) use ($selectedBranchId) {
@@ -218,10 +216,27 @@ class HomeController extends Controller
         });
 
         $categories = Category::withCount('products')->where('status', 1)->get();
-        $banners = Banner::where('is_active', 1)->get();
+        $banners = Banner::where('is_active', 1)
+                        ->where('position', 'homepage')
+                        ->orderBy('order', 'ASC')
+                        ->orderBy('id', 'ASC')
+                        ->get();
+        
+        // Debug banner data
+        if (config('app.debug')) {
+            \Log::info('Banner data loaded:', $banners->toArray());
+        }
 
         // Pass all necessary data to the view
-        return view('customer.home', compact('products', 'featuredProducts', 'topRatedProducts', 'featuredCombos', 'categories', 'banners'));
+        return view('customer.home', [
+            'products' => $products,
+            'featuredProducts' => $featuredProducts,
+            'topRatedProducts' => $topRatedProducts,
+            'featuredCombos' => $featuredCombos,
+            'categories' => $categories,
+            'banners' => $banners,
+            'selectedBranch' => $currentBranch, // Thêm dòng này
+        ]);
     }
 
     public function search(Request $request)
@@ -273,9 +288,7 @@ class HomeController extends Controller
 
             // Apply rating filter - only show products with minimum rating
             if ($minRating > 0) {
-                $products->whereHas('reviews', function($q) use ($minRating) {
-                    $q->where('approved', true);
-                });
+                $products->whereHas('reviews');
 
                 // Add having clause for average rating
                 $products->withAvg('reviews', 'rating')
@@ -291,14 +304,10 @@ class HomeController extends Controller
                     $products->orderBy('base_price', 'desc');
                     break;
                 case 'reviews':
-                    $products->withCount(['reviews' => function($q) {
-                        $q->where('approved', true);
-                    }])->orderBy('reviews_count', 'desc');
+                    $products->withCount(['reviews'])->orderBy('reviews_count', 'desc');
                     break;
                 default: // rating
-                    $products->withAvg(['reviews' => function($q) {
-                        $q->where('approved', true);
-                    }], 'rating')->orderBy('reviews_avg_rating', 'desc');
+                    $products->withAvg(['reviews'], 'rating')->orderBy('reviews_avg_rating', 'desc');
                     break;
             }
 
@@ -372,8 +381,8 @@ class HomeController extends Controller
                 }
 
                 // Đánh giá
-                $product->average_rating = $product->reviews->where('approved', true)->avg('rating') ?? 0;
-                $product->reviews_count = $product->reviews->where('approved', true)->count();
+                $product->average_rating = $product->reviews->avg('rating') ?? 0;
+                $product->reviews_count = $product->reviews->count();
 
                 // Tính giá hiển thị
                 $product->display_price = $product->discount_price ?? $product->base_price;

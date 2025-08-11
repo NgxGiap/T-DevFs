@@ -24,9 +24,13 @@ use App\Models\Order;
 use App\Models\ProductReview;
 use App\Models\ReviewReply;
 use App\Observers\ProductReviewObserver;
+use App\Models\ReviewReport;
+use App\Observers\ReviewReportObserver;
 use App\Observers\ReviewReplyObserver;
 use Illuminate\Support\Facades\View;
 use Illuminate\Support\Facades\Auth;
+use App\Models\ComboBranchStock;
+use App\Observers\ComboBranchStockObserver;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -44,6 +48,25 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         Schema::defaultStringLength(191);
+        
+        // Helper function for safe date formatting
+        View::share('formatDate', function($date, $format = 'd/m/Y H:i') {
+            if (!$date) return '';
+            
+            if (is_string($date)) {
+                try {
+                    return \Carbon\Carbon::parse($date)->format($format);
+                } catch (\Exception $e) {
+                    return $date;
+                }
+            }
+            
+            if ($date instanceof \Carbon\Carbon || $date instanceof \DateTime) {
+                return $date->format($format);
+            }
+            
+            return $date;
+        });
         Passport::ignoreRoutes();
 
         // Register BranchStock Observer
@@ -65,6 +88,9 @@ class AppServiceProvider extends ServiceProvider
         // Register ComboObserver
         Combo::observe(ComboObserver::class);
 
+        // Register ComboBranchStockObserver
+        ComboBranchStock::observe(ComboBranchStockObserver::class);
+
         // Register OrderObserver
         // Order::observe(OrderObserver::class);
 
@@ -73,6 +99,9 @@ class AppServiceProvider extends ServiceProvider
 
         // Register ProductReviewObserver
         ProductReview::observe(ProductReviewObserver::class);
+
+        // Register ReviewReportObserver
+        ReviewReport::observe(ReviewReportObserver::class);
 
         // Nếu bạn cần tuỳ chỉnh token expiration, scopes... thì thêm ở đây
         // Passport::tokensExpireIn(now()->addDays(15));
@@ -109,12 +138,12 @@ class AppServiceProvider extends ServiceProvider
         });
 
         // View composer for admin notifications
-        View::composer('partials.admin.header', function ($view) {
-            $admin = Auth::user();
-            if ($admin) {
+        View::composer(['partials.admin.header', 'partials.admin.sidebar'], function ($view) {
+            $admin = Auth::guard('admin')->user() ?? Auth::user();
+            if ($admin instanceof \App\Models\User && method_exists($admin, 'hasRole') && $admin->hasRole('admin')) {
                 $adminNotifications = $admin->notifications()->latest()->limit(10)->get();
                 $adminUnreadCount = $admin->unreadNotifications()->count();
-                
+
                 $view->with([
                     'adminNotifications' => $adminNotifications,
                     'adminUnreadCount' => $adminUnreadCount
@@ -125,6 +154,19 @@ class AppServiceProvider extends ServiceProvider
                     'adminUnreadCount' => 0
                 ]);
             }
+        });
+
+        // View Composer cho customer notification
+        View::composer('partials.customer.header', function ($view) {
+            $user = Auth::user();
+            if ($user instanceof \App\Models\User) {
+                $customerNotifications = $user->notifications()->latest()->limit(10)->get();
+                $customerUnreadCount = $user->unreadNotifications()->count();
+            } else {
+                $customerNotifications = collect();
+                $customerUnreadCount = 0;
+            }
+            $view->with(compact('customerNotifications', 'customerUnreadCount'));
         });
     }
 }

@@ -747,35 +747,16 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 
-// Load all provinces from API
+// Load provinces on page load - Chỉ hiển thị Hà Nội
 function loadProvinces() {
     const citySelect = document.getElementById('city');
     if (!citySelect) return;
     
-    // Show loading state
-    citySelect.innerHTML = '<option value="">Đang tải...</option>';
+    // Chỉ hiển thị Hà Nội
+    citySelect.innerHTML = '<option value="Hà Nội" data-code="1" selected>Hà Nội</option>';
     
-    fetch('https://provinces.open-api.vn/api/p/')
-        .then(response => response.json())
-        .then(data => {
-            // Clear loading state
-            citySelect.innerHTML = '<option value="">-- Chọn Tỉnh/Thành phố --</option>';
-            
-            // Add province options
-            if (data && Array.isArray(data)) {
-                data.forEach(province => {
-                    const option = document.createElement('option');
-                    option.value = province.name;
-                    option.textContent = province.name;
-                    option.dataset.code = province.code;
-                    citySelect.appendChild(option);
-                });
-            }
-        })
-        .catch(error => {
-            console.error('Error loading provinces:', error);
-            citySelect.innerHTML = '<option value="">Không thể tải dữ liệu</option>';
-        });
+    // Tự động load quận/huyện của Hà Nội
+    loadDistricts('1');
 }
 
 // Load districts for selected province
@@ -786,14 +767,15 @@ function loadDistricts(provinceCode) {
     // Show loading state
     districtSelect.innerHTML = '<option value="">Đang tải...</option>';
     
-    fetch(`https://provinces.open-api.vn/api/p/${provinceCode}?depth=2`)
+    // Sử dụng file JSON thay vì API
+    fetch('/data/hanoi-districts.json')
         .then(response => response.json())
         .then(data => {
             // Clear loading state
             districtSelect.innerHTML = '<option value="">-- Chọn Quận/Huyện --</option>';
             
             // Add district options
-            if (data && data.districts) {
+            if (data && data.districts && Array.isArray(data.districts)) {
                 data.districts.forEach(district => {
                     const option = document.createElement('option');
                     option.value = district.name;
@@ -801,12 +783,14 @@ function loadDistricts(provinceCode) {
                     option.dataset.code = district.code;
                     districtSelect.appendChild(option);
                 });
+            } else {
+                console.error('Invalid districts data format');
             }
         })
         .catch(error => {
             console.error('Error loading districts:', error);
             districtSelect.innerHTML = '<option value="">Không thể tải dữ liệu</option>';
-        });
+        });}
 }
 
 // Modal functions
@@ -912,4 +896,4 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 </script>
 
-@endsection 
+@endsection

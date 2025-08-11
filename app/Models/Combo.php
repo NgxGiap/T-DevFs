@@ -2,10 +2,12 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 
 class Combo extends Model
 {
@@ -22,8 +24,52 @@ class Combo extends Model
         'status',
         'category_id',
         'created_by',
-        'updated_by'
+        'updated_by',
+        'slug',
     ];
+
+    protected static function boot()
+    {
+        parent::boot();
+
+        static::creating(function ($combo) {
+            if (empty($combo->slug) && !empty($combo->name)) {
+                $slug = Str::slug($combo->name);
+                $originalSlug = $slug;
+                $i = 1;
+                // Ensure unique slug
+                while (static::where('slug', $slug)->exists()) {
+                    $slug = $originalSlug . '-' . $i++;
+                }
+                $combo->slug = $slug;
+            }
+        });
+        static::updating(function ($combo) {
+            if (empty($combo->slug) && !empty($combo->name)) {
+                $slug = Str::slug($combo->name);
+                $originalSlug = $slug;
+                $i = 1;
+                // Ensure unique slug
+                while (static::where('slug', $slug)->where('id', '!=', $combo->id)->exists()) {
+                    $slug = $originalSlug . '-' . $i++;
+                }
+                $combo->slug = $slug;
+            }
+        });
+    }
+
+    protected function url(): Attribute
+    {
+        return Attribute::make(
+            get: function () {
+                if ($this->image) {
+                    // Sử dụng trực tiếp đường dẫn từ DB vì nó đã bao gồm thư mục con
+                    return Storage::disk('s3')->url($this->image);
+                }
+                return asset('images/default-combo.png');
+            },
+        );
+    }
 
     public function productVariants(): BelongsToMany
     {
@@ -74,7 +120,7 @@ class Combo extends Model
     public function getTotalOriginalPriceAttribute()
     {
         // Tính tổng giá gốc của combo dựa trên các biến thể sản phẩm và số lượng từng biến thể
-        return $this->productVariants()->get()->sum(function($variant) {
+        return $this->productVariants()->get()->sum(function ($variant) {
             $quantity = $variant->pivot->quantity ?? 1;
             return $variant->price * $quantity;
         });
@@ -115,5 +161,13 @@ class Combo extends Model
     public function comboBranchStocks()
     {
         return $this->hasMany(\App\Models\ComboBranchStock::class, 'combo_id');
+    }
+
+    /**
+     * Get reviews for this combo
+     */
+    public function reviews()
+    {
+        return $this->hasMany(\App\Models\ProductReview::class, 'combo_id');
     }
 }

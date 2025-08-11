@@ -203,6 +203,7 @@ Route::middleware(['auth:admin'])->prefix('admin')->name('admin.')->group(functi
     // Driver Application Management
     Route::prefix('drivers')->name('drivers.')->group(function () {
         Route::get('/', [DriverController::class, 'index'])->name('index');
+        Route::get('/tracking', [DriverController::class, 'tracking'])->name('tracking');
         Route::get('/create', [DriverController::class, 'create'])->name('create');
         Route::post('/store', [DriverController::class, 'store'])->name('store');
         Route::get('/show/{driver}', [DriverController::class, 'show'])->name('show');
@@ -304,7 +305,6 @@ Route::middleware(['auth:admin'])->prefix('admin')->name('admin.')->group(functi
         Route::get('{product}/stock-summary', [BranchStockController::class, 'summary'])->name('stock-summary');
         Route::get('low-stock-alerts', [BranchStockController::class, 'lowStockAlerts'])->name('low-stock-alerts');
         Route::get('out-of-stock', [BranchStockController::class, 'outOfStock'])->name('out-of-stock');
-
     });
 
     // General Settings Management
@@ -340,6 +340,8 @@ Route::middleware(['auth:admin'])->prefix('admin')->name('admin.')->group(functi
         Route::post('/send', [ChatController::class, 'sendMessage'])->name('send');
         Route::get('/messages/{conversation}', [ChatController::class, 'getMessages'])->name('messages');
         Route::post('/distribute', [ChatController::class, 'distributeConversation'])->name('distribute');
+        Route::post('/typing', [ChatController::class, 'typingIndicator'])->name('typing');
+        Route::get('/unread-count', [ChatController::class, 'getUnreadChatCount'])->name('unread-count');
     });
 
     Route::get('notifications', [NotificationController::class, 'index'])->name('notifications.index');
@@ -353,6 +355,25 @@ Route::middleware(['auth:admin'])->prefix('admin')->name('admin.')->group(functi
         Route::get('/export', [OrderController::class, 'export'])->name('export');
         // Route để lấy HTML partial cho order row (cho realtime)
         Route::get('/{id}/row', [OrderController::class, 'getOrderRow'])->name('row');
+        // Route để lấy số lượng đơn hàng theo trạng thái (cho real-time updates)
+        Route::get('/counts', [OrderController::class, 'getCounts'])->name('counts');
+        Route::post('/{id}/update-status', [OrderController::class, 'updateStatus'])->name('update-status');
+        Route::post('/{order}/cancel', [\App\Http\Controllers\Admin\OrderController::class, 'cancel'])->name('cancel');
+        
+        // AJAX routes for enhanced functionality
+        Route::get('/{id}/details', [OrderController::class, 'details'])->name('details');
+        Route::get('/{id}/refresh-status', [OrderController::class, 'refreshStatus'])->name('refresh-status');
+        Route::get('/{id}/available-transitions', [OrderController::class, 'availableTransitions'])->name('available-transitions');
+    });
+
+    // Reviews Management
+    Route::prefix('reviews')->name('reviews.')->group(function () {
+        Route::get('/', [\App\Http\Controllers\Admin\ReviewController::class, 'index'])->name('index');
+        Route::match(['get', 'post'], '/filter', [\App\Http\Controllers\Admin\ReviewController::class, 'filter'])->name('filter');
+        Route::delete('/{id}', [\App\Http\Controllers\Admin\ReviewController::class, 'destroy'])->name('destroy');
+        Route::get('/reports', [\App\Http\Controllers\Admin\ReviewController::class, 'reports'])->name('reports');
+        Route::get('/{id}/show', [\App\Http\Controllers\Admin\ReviewController::class, 'show'])->name('show');
+        Route::get('/report/{id}', [\App\Http\Controllers\Admin\ReviewController::class, 'showReport'])->name('report.show');
     });
 });
 
@@ -361,6 +382,10 @@ Route::middleware(['auth:admin'])->prefix('admin')->name('admin.')->group(functi
 // Add public broadcast routes for discount updates
 Route::post('/broadcasting/auth', function () {
     return Broadcast::auth(request());
-})->middleware('web');
-// Thêm vào group combos:
+})->middleware(['web', 'auth:admin']);
 
+// Add admin broadcasting auth route
+Route::post('/admin/broadcasting/auth', function () {
+    return Broadcast::auth(request());
+})->middleware(['web', 'auth:admin']);
+// Thêm vào group combos:

@@ -14,6 +14,7 @@ use Illuminate\Support\Facades\Broadcast;
 use Illuminate\Support\Facades\Log;
 use App\Http\Controllers\Branch\DriverAssignmentController;
 use App\Http\Controllers\Branch\NotificationController;
+use App\Http\Controllers\Branch\ReviewController;
 
 // Branch Authentication Routes
 Route::prefix('branch')->name('branch.')->group(function () {
@@ -44,10 +45,12 @@ Route::middleware(['branch.auth'])->prefix('branch')->name('branch.')->group(fun
         Route::post('/{id}/driver-rejection', [DriverAssignmentController::class, 'handleDriverRejection'])->name('driver-rejection');
     });
     Route::get('/products', [BranchProductController::class, 'index'])->name('products');
+    Route::get('/products/{slug}', [BranchProductController::class, 'show'])->name('products.show');
     Route::get('/categories', [BranchCategoryController::class, 'index'])->name('categories');
     Route::get('/staff', [BranchStaffController::class, 'index'])->name('staff');
 
     Route::get('/combos', [BranchProductController::class, 'indexCombo'])->name('combos');
+    Route::get('/combos/{slug}', [BranchProductController::class, 'showCombo'])->name('combos.show');
     Route::get('/toppings', [BranchProductController::class, 'indexTopping'])->name('toppings');
 
     // Branch Chat Routes
@@ -56,14 +59,21 @@ Route::middleware(['branch.auth'])->prefix('branch')->name('branch.')->group(fun
         Route::get('/api/conversation/{id}', [BranchChatController::class, 'apiGetConversation'])->name('conversation');
         Route::post('/send-message', [BranchChatController::class, 'sendMessage'])->name('send');
         Route::post('/update-status', [BranchChatController::class, 'updateStatus'])->name('status');
+        Route::post('/typing', [BranchChatController::class, 'typingIndicator'])->name('typing');
+        Route::get('/unread-count', [BranchChatController::class, 'getUnreadChatCount'])->name('unread-count');
     });
 
     // Broadcasting authentication route for branch
     Route::post('/broadcasting/auth', function (Request $request) {
+        // Set default guard to manager for broadcast auth
+        Auth::setDefaultDriver('manager');
+
+        $user = Auth::guard('manager')->user();
         Log::info('[Broadcasting] Auth request received', [
             'channel' => $request->input('channel_name'),
             'socket_id' => $request->input('socket_id'),
-            'user' => Auth::guard('manager')->user(),
+            'user' => $user,
+            'user_has_branch' => $user ? ($user->branch ? $user->branch->id : 'no_branch') : 'no_user',
             'session' => $request->session()->all()
         ]);
 
@@ -76,10 +86,21 @@ Route::middleware(['branch.auth'])->prefix('branch')->name('branch.')->group(fun
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
-            throw $e;
+            return response()->json(['error' => 'Unauthorized'], 403);
         }
     })->middleware(['web']);
 
     Route::get('notifications', [NotificationController::class, 'index'])->name('notifications.index');
     Route::post('notifications/{id}/read', [NotificationController::class, 'markAsRead'])->name('branch.notifications.read');
+
+    // Branch Review Management Routes
+    Route::prefix('reviews')->name('reviews.')->group(function () {
+        Route::get('/', [ReviewController::class, 'index'])->name('index');
+        Route::get('/{id}', [ReviewController::class, 'show'])->name('show');
+        Route::post('/{id}/reply', [ReviewController::class, 'reply'])->name('reply');
+        Route::delete('/{reviewId}/delete', [ReviewController::class, 'deleteReview'])->name('delete');
+        Route::delete('/reply/{replyId}', [ReviewController::class, 'deleteReply'])->name('reply.delete');
+        Route::get('/reports/list', [ReviewController::class, 'reports'])->name('reports');
+        Route::get('/reports/{id}', [ReviewController::class, 'showReport'])->name('report.show');
+    });
 });

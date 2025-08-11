@@ -2,10 +2,10 @@
 
 namespace App\Http\Controllers\Customer;
 
-use App\Events\OrderCancelledByCustomer; // Ensure this event is correctly imported.
-use App\Events\OrderStatusUpdated;
+use App\Events\Order\OrderStatusUpdated;
 use App\Http\Controllers\Controller;
 use App\Models\Order;
+use App\Models\OrderCancellation;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\Rule;
@@ -16,14 +16,33 @@ class OrderController extends Controller
 {
     /**
      * Hiển thị trang liệt kê tất cả đơn hàng của khách hàng đã đăng nhập.
+     * Có thể lọc theo trạng thái đơn hàng.
      */
-    public function index()
+    public function index(Request $request)
     {
-        $orders = Order::where('customer_id', Auth::id())
-            ->latest() // Sắp xếp đơn hàng mới nhất lên đầu
-            ->paginate(10); // Phân trang, mỗi trang 10 đơn hàng
+        $query = Order::where('customer_id', Auth::id());
+        
+        // Lọc theo trạng thái nếu có
+        if ($request->has('status') && $request->status != 'all') {
+            $query->where('status', $request->status);
+        }
+        
+        $orders = $query->latest() // Sắp xếp đơn hàng mới nhất lên đầu
+            ->paginate(10) // Phân trang, mỗi trang 10 đơn hàng
+            ->withQueryString(); // Giữ lại các tham số query khi phân trang
 
-        return view('customer.orders.index', compact('orders'));
+        // Danh sách các trạng thái để hiển thị trong bộ lọc
+        $statuses = [
+            'all' => 'Tất cả',
+            'awaiting_confirmation' => 'Chờ xác nhận',
+            'confirmed' => 'Đã xác nhận',
+            'in_transit' => 'Đang giao',
+            'delivered' => 'Đã giao',
+            'item_received' => 'Đã nhận hàng',
+            'cancelled' => 'Đã hủy'
+        ];
+
+        return view('customer.orders.index', compact('orders', 'statuses'));
     }
 
     /**
@@ -40,7 +59,7 @@ class OrderController extends Controller
         $order->load([
             'branch',
             'driver',
-            'payment.paymentMethod', // Tải cả phương thức thanh toán
+            'payment', // Tải thông tin thanh toán
             'orderItems.productVariant.product.primaryImage',
             'orderItems.productVariant.variantValues.attribute',
             'orderItems.toppings' // Đảm bảo bạn có quan hệ này trong model OrderItem
@@ -81,8 +100,26 @@ class OrderController extends Controller
         if ($newStatus === 'cancelled' && $order->status === 'awaiting_confirmation') {
             $canUpdate = true;
             $message = 'Đơn hàng của bạn đã được hủy thành công.';
-            // Dispatch event for driver about customer cancellation
-            event(new OrderCancelledByCustomer($order->id)); //
+            
+            // Lưu thông tin hủy đơn hàng
+            OrderCancellation::create([
+                'order_id' => $order->id,
+                'cancelled_by' => Auth::id(),
+                'cancellation_type' => 'customer_cancel',
+                'cancellation_date' => now(),
+                'reason' => $request->reason,
+                'cancellation_stage' => 'before_processing',
+                'penalty_applied' => false,
+                'penalty_amount' => 0,
+                'points_deducted' => 0,
+            ]);
+            
+            // Lấy dữ liệu mới nhất từ cơ sở dữ liệu bao gồm thông tin hủy đơn
+            $freshOrder = $order->fresh(['cancellation']);
+            
+            // Sử dụng OrderStatusUpdated với tham số isCancelledByCustomer = true
+            // thay thế cho cả OrderCancelledByCustomer và OrderCancelledByCustomerForBranch
+            event(new OrderStatusUpdated($freshOrder, true, $order->getOriginal('status'), 'cancelled'));
         }
         // Khách hàng xác nhận đã nhận hàng (chỉ khi đơn đã được giao)
         elseif ($newStatus === 'item_received' && $order->status === 'delivered') {
@@ -115,9 +152,10 @@ class OrderController extends Controller
         // Lấy dữ liệu mới nhất từ cơ sở dữ liệu
         $freshOrder = $order->fresh();
 
-        // 5. Broadcast sự kiện cập nhật trạng thái đơn hàng
-        // broadcast(new OrderStatusUpdated($freshOrder))->toOthers(); // Remove .toOthers() if not needed or if it causes issues
-        event(new OrderStatusUpdated($freshOrder)); //
+        // 5. Broadcast sự kiện cập nhật trạng thái đơn hàng (nếu không phải hủy đơn)
+        if ($newStatus !== 'cancelled') {
+            event(new OrderStatusUpdated($freshOrder, false, $order->getOriginal('status'), $newStatus));
+        }
 
         // Trả về kết quả thành công và dữ liệu đơn hàng đã được cập nhật
         return response()->json([
@@ -129,12 +167,21 @@ class OrderController extends Controller
 
     /**
      * Trả về partial danh sách đơn hàng cho AJAX reload.
+     * Hỗ trợ lọc theo trạng thái.
      */
-    public function listPartial()
+    public function listPartial(Request $request)
     {
-        $orders = Order::where('customer_id', Auth::id())
-            ->latest()
-            ->paginate(10);
+        $query = Order::where('customer_id', Auth::id());
+        
+        // Lọc theo trạng thái nếu có
+        if ($request->has('status') && $request->status != 'all') {
+            $query->where('status', $request->status);
+        }
+        
+        $orders = $query->latest()
+            ->paginate(10)
+            ->withQueryString(); // Giữ lại các tham số query khi phân trang
+            
         return view('customer.orders.partials.list', compact('orders'))->render();
     }
 
@@ -162,9 +209,9 @@ class OrderController extends Controller
                 'order_code' => 'required|string|max:20',
                 'cf-turnstile-response' => ['required', new \App\Rules\TurnstileRule()],
             ]);
-            
+
             $order_code = $validated['order_code'];
-            
+
             // Redirect to GET route với order_code
             return redirect()->route('customer.order.track', ['order_code' => $order_code]);
         }
@@ -177,9 +224,9 @@ class OrderController extends Controller
 
         // Rút gọn tên khách hàng để bảo mật
         if ($order->customer_id && $order->customer) {
-             $order->customer_name_short = \Illuminate\Support\Str::limit($order->customer->name, 3, '***');
+            $order->customer_name_short = \Illuminate\Support\Str::limit($order->customer->name, 3, '***');
         } else {
-             $order->customer_name_short = \Illuminate\Support\Str::limit($order->guest_name, 3, '***');
+            $order->customer_name_short = \Illuminate\Support\Str::limit($order->guest_name, 3, '***');
         }
 
         // Rút gọn địa chỉ để bảo mật
@@ -217,7 +264,7 @@ class OrderController extends Controller
 
         // Thêm các trạng thái từ lịch sử
         foreach ($order->orderStatusHistories->sortBy('changed_at') as $history) {
-             $timeline->push([
+            $timeline->push([
                 'status' => $this->translateStatus($history->new_status),
                 'time' => $history->changed_at,
                 'is_current' => false,
@@ -234,7 +281,7 @@ class OrderController extends Controller
                 $timeline->push($lastStatus);
             }
         }
-        
+
         return $timeline;
     }
 
@@ -244,6 +291,7 @@ class OrderController extends Controller
     private function translateStatus($status)
     {
         $translations = [
+            'pending_payment' => 'Chưa thanh toán',
             'awaiting_confirmation' => 'Chờ xác nhận',
             'confirmed' => 'Đã xác nhận',
             'awaiting_driver' => 'Đang tìm tài xế',

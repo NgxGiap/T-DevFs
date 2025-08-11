@@ -163,13 +163,13 @@ function dtmodalCloseToast(toast) {
 function dtmodalCreateModal(options) {
     const {
         type = "info",
-        title = "",
-        subtitle = "",
-        message = "",
-        confirmText = "Xác nhận",
-        cancelText = "Hủy bỏ",
-        onConfirm = null,
-        onCancel = null,
+            title = "",
+            subtitle = "",
+            message = "",
+            confirmText = "Xác nhận",
+            cancelText = "Hủy bỏ",
+            onConfirm = null,
+            onCancel = null,
     } = options;
 
     const modalId = "dtmodal" + Math.random().toString(36).substr(2, 9);
@@ -248,41 +248,42 @@ function dtmodalHandleAction(modalId, isConfirm) {
 function dtmodalConfirmDelete(options) {
     const {
         title = "Xác nhận xóa",
-        subtitle = "Bạn có chắc chắn muốn xóa?",
-        message = "Hành động này không thể hoàn tác.",
-        itemName = "",
-        onConfirm = null,
+            subtitle = "Bạn có chắc chắn muốn xóa?",
+            message = "Hành động này không thể hoàn tác.",
+            itemName = "",
+            onConfirm = null,
     } = options;
 
     return dtmodalCreateModal({
         type: "warning",
         title: title,
         subtitle: subtitle,
-        message: itemName
-            ? `Bạn đang xóa: <strong>"${itemName}"</strong><br>${message}`
-            : message,
+        message: itemName ?
+            `Bạn đang xóa: <strong>"${itemName}"</strong><br>${message}` :
+            message,
         confirmText: "Xác nhận xóa",
         cancelText: "Hủy bỏ",
         onConfirm: onConfirm,
         onCancel: null,
     });
 }
+
 function dtmodalConfirmIndex(options) {
     const {
         title = "Xác nhận xóa",
-        subtitle = "Bạn có chắc chắn muốn xóa?",
-        message = "Hành động này không thể hoàn tác.",
-        itemName = "",
-        onConfirm = null,
+            subtitle = "Bạn có chắc chắn muốn xóa?",
+            message = "Hành động này không thể hoàn tác.",
+            itemName = "",
+            onConfirm = null,
     } = options;
 
     return dtmodalCreateModal({
         type: "warning",
         title: title,
         subtitle: subtitle,
-        message: itemName
-            ? `Bạn đang thay đổi trạng thái của  : <strong>"${itemName}"</strong><br>${message}`
-            : message,
+        message: itemName ?
+            `Bạn đang thay đổi trạng thái của  : <strong>"${itemName}"</strong><br>${message}` :
+            message,
         confirmText: "Xác nhận thay đổi",
         cancelText: "Hủy bỏ",
         onConfirm: onConfirm,
@@ -309,8 +310,7 @@ function dtmodalHandleStatusToggle(options) {
 
     dtmodalConfirmIndex({
         title: confirmTitle,
-        subtitle:
-            confirmSubtitle || `Bạn có chắc chắn muốn ${statusText} mục này?`,
+        subtitle: confirmSubtitle || `Bạn có chắc chắn muốn ${statusText} mục này?`,
         message: confirmMessage,
         itemName: userName,
         onConfirm: () => {
@@ -347,7 +347,7 @@ function updateSelectedStatus(status) {
         message: `Bạn có chắc chắn muốn ${statusText} ${selectedIds.length} người dùng đã chọn không?`,
         confirmText: "Xác nhận",
         cancelText: "Hủy",
-        onConfirm: function () {
+        onConfirm: function() {
             document.getElementById("selectedUserIds").value =
                 selectedIds.join(",");
             document.getElementById("selectedStatus").value = status;
@@ -383,81 +383,10 @@ function updateSelectedBannerStatus(status) {
         message: `Bạn có chắc chắn muốn ${statusText} ${selectedIds.length} banner đã chọn không?`,
         confirmText: "Xác nhận",
         cancelText: "Hủy",
-        onConfirm: function () {
+        onConfirm: function() {
             document.getElementById("ids").value = JSON.stringify(selectedIds);
             document.getElementById("status").value = status;
             document.getElementById("bulkStatusForm").submit();
         },
     });
 }
-
-function dtmodalHandleCategoryStatusToggle(options) {
-    const {
-        button,
-        categoryName,
-        currentStatus,
-        formSelector = 'form',
-        confirmTitle = 'Xác nhận thay đổi trạng thái',
-        confirmSubtitle = 'Bạn có chắc chắn muốn thay đổi trạng thái danh mục này?',
-        confirmMessage = 'Hành động này sẽ thay đổi trạng thái hiển thị của danh mục.',
-        successMessage = 'Đã thay đổi trạng thái danh mục thành công',
-        errorMessage = 'Có lỗi xảy ra khi thay đổi trạng thái danh mục'
-    } = options;
-
-    const newStatus = !currentStatus;
-    const statusText = newStatus ? 'hiển thị' : 'ẩn';
-
-    dtmodalConfirmIndex({
-        title: confirmTitle,
-        subtitle: confirmSubtitle || `Bạn có chắc chắn muốn ${statusText} danh mục này?`,
-        message: confirmMessage,
-        itemName: categoryName,
-        onConfirm: () => {
-            const form = button.closest(formSelector);
-            form.submit();
-        }
-    });
-}
-
-
-function updateSelectedCategoryStatus(status) {
-    const checkboxes = document.getElementsByClassName('category-row-checkbox');
-    const selectedIds = [];
-
-    for (let checkbox of checkboxes) {
-        if (checkbox.checked) {
-            selectedIds.push(checkbox.value);
-        }
-    }
-
-    if (selectedIds.length === 0) {
-        dtmodalShowToast('warning', {
-            title: 'Cảnh báo',
-            message: 'Vui lòng chọn ít nhất một danh mục'
-        });
-        return;
-    }
-
-    const statusText = status === 1 ? 'hiển thị' : 'ẩn';
-
-    dtmodalCreateModal({
-        type: 'warning',
-        title: `Xác nhận ${statusText} danh mục`,
-        message: `Bạn có chắc chắn muốn ${statusText} ${selectedIds.length} danh mục đã chọn không?`,
-        confirmText: 'Xác nhận',
-        cancelText: 'Hủy',
-        onConfirm: function () {
-            document.getElementById('selectedCategoryIds').value = selectedIds.join(',');
-            document.getElementById('selectedCategoryStatus').value = status;
-            document.getElementById('bulkCategoryStatusForm').submit();
-        }
-    });
-}
-
-function dtmodalCloseAllToasts() {
-    const container = document.getElementById('dtmodalToastContainer');
-    if (container) {
-        Array.from(container.children).forEach(dtmodalCloseToast);
-    }
-}
-
