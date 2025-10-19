@@ -14,6 +14,7 @@ use Illuminate\Support\Facades\Auth;
 use App\Models\Cart;
 use App\Models\Branch;
 use App\Models\Address;
+use App\Models\DiscountCode;
 use App\Services\BranchService;
 use App\Services\ShippingService;
 use Illuminate\Support\Facades\Log;
@@ -42,13 +43,209 @@ class CheckoutController extends Controller
             session()->forget('buy_now_checkout');
         }
         $buyNow = session('buy_now_checkout');
+        
+        // Lấy danh sách mã giảm giá có thể áp dụng
+        $now = \Carbon\Carbon::now();
+        $currentTime = $now->format('H:i:s');
+        $currentBranch = $this->branchService->getCurrentBranch();
+        $branchId = $currentBranch ? $currentBranch->id : null;
+        
+        // Query mã giảm giá đang hoạt động
+        $activeDiscountCodesQuery = \App\Models\DiscountCode::where('is_active', true)
+            ->where('start_date', '<=', $now)
+            ->where('end_date', '>=', $now)
+            ->where(function($query) use ($branchId) {
+                if ($branchId) {
+                    $query->whereDoesntHave('branches')
+                          ->orWhereHas('branches', function($q) use ($branchId) {
+                              $q->where('branches.id', $branchId);
+                          });
+                }
+            });
+
+        // Lọc theo loại mã giảm giá (công khai hoặc cá nhân)
+        $activeDiscountCodesQuery->where(function($query) {
+            $query->where('usage_type', 'public');
+            if (\Illuminate\Support\Facades\Auth::check()) {
+                $query->orWhere(function($q) {
+                    $q->where('usage_type', 'personal')
+                       ->whereHas('users', function($uq){
+                           $uq->where('user_id', \Illuminate\Support\Facades\Auth::id());
+                       });
+                });
+            }
+        });
+        
+
+        // Lấy danh sách mã giảm giá và lọc theo thời gian hợp lệ
+        $availableDiscountCodes = $activeDiscountCodesQuery->with(['products' => function($q){
+            $q->with(['product', 'category']);
+        }])->get()->filter(function($discountCode) use ($currentTime) {
+            if ($discountCode->valid_from_time && $discountCode->valid_to_time) {
+                $from = \Carbon\Carbon::parse($discountCode->valid_from_time)->format('H:i:s');
+                $to   = \Carbon\Carbon::parse($discountCode->valid_to_time)->format('H:i:s');
+                if ($from < $to) {
+                    if (!($currentTime >= $from && $currentTime <= $to)) return false;
+                } else {
+                    if (!($currentTime >= $from || $currentTime <= $to)) return false;
+                }
+            }
+            return true;
+        });
+        
+        // Lấy thông tin giỏ hàng để kiểm tra sản phẩm
+        $userId = Auth::id();
+        $sessionId = session()->getId();
+        $cartQuery = Cart::query()->where('status', 'active');
+        if ($userId) {
+            $cartQuery->where('user_id', $userId);
+        } else {
+            $cartQuery->where('session_id', $sessionId);
+        }
+        $cart = $cartQuery->with('items.variant.product')->first();
+        
+        // Lọc mã giảm giá dựa trên sản phẩm trong giỏ hàng
+        if ($cart && $cart->items->count() > 0) {
+            // Lấy danh sách sản phẩm và danh mục trong giỏ hàng
+            $cartProductIds = $cart->items->whereNotNull('variant.product_id')
+                ->pluck('variant.product_id')->unique()->toArray();
+            
+            // Đảm bảo lấy đúng danh mục của sản phẩm
+            $cartCategoryIds = [];
+            foreach ($cart->items as $item) {
+                if ($item->variant && $item->variant->product && $item->variant->product->category_id) {
+                    $cartCategoryIds[] = $item->variant->product->category_id;
+                }
+            }
+            $cartCategoryIds = array_unique($cartCategoryIds);
+            
+            // Lọc mã giảm giá
+            $availableDiscountCodes = $availableDiscountCodes->filter(function($discountCode) use ($cartProductIds, $cartCategoryIds) {
+                // Nếu có từ 2 sản phẩm khác nhau trở lên
+                $distinctProductCount = count($cartProductIds);
+                if ($distinctProductCount >= 2) {
+                    // Nếu có từ 2 sản phẩm khác nhau trở lên, chỉ hiển thị mã giảm giá theo giá trị đơn hàng
+                    return $discountCode->min_requirement_type === 'order_amount' || !$discountCode->min_requirement_type;
+                }
+                // Nếu chỉ có 1 sản phẩm, hiển thị tất cả các loại mã giảm giá áp dụng được (bao gồm mã giảm giá cho danh mục cụ thể)
+                
+                // Nếu mã giảm giá áp dụng cho tất cả sản phẩm
+                if ($discountCode->applicable_items === 'all_items') {
+                    return true;
+                }
+                
+                // Nếu mã giảm giá áp dụng cho sản phẩm cụ thể
+                if ($discountCode->applicable_items === 'specific_products') {
+                    $specificProductIds = $discountCode->products->whereNotNull('product_id')
+                        ->pluck('product_id')->toArray();
+                    
+                    // Kiểm tra xem có sản phẩm nào trong giỏ hàng thuộc danh sách sản phẩm được áp dụng không
+                    foreach ($cartProductIds as $productId) {
+                        if (in_array($productId, $specificProductIds)) {
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+                
+                // Nếu mã giảm giá áp dụng cho danh mục cụ thể
+                if ($discountCode->applicable_items === 'specific_categories') {
+                    // Sử dụng specificCategories() để lấy danh mục cụ thể
+                    $specificCategoryIds = $discountCode->specificCategories()->pluck('category_id')->toArray();
+                    
+                    // Debug: Ghi log để kiểm tra
+                    \Illuminate\Support\Facades\Log::info('Cart Category IDs: ' . json_encode($cartCategoryIds));
+                    \Illuminate\Support\Facades\Log::info('Specific Category IDs: ' . json_encode($specificCategoryIds));
+                    
+                    // Kiểm tra xem có sản phẩm nào trong giỏ hàng thuộc danh mục được áp dụng không
+                    foreach ($cartCategoryIds as $categoryId) {
+                        if (in_array($categoryId, $specificCategoryIds)) {
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+                
+                return true;
+            });
+        }
         if ($buyNow) {
+            // Lọc mã giảm giá cho trường hợp mua ngay
+            if ($buyNow['type'] === 'product' && !empty($buyNow['variant_id'])) {
+                $variant = \App\Models\ProductVariant::with([
+                    'product.images',
+                    'product.category',
+                    'variantValues.attribute'
+                ])->find($buyNow['variant_id']);
+                
+                if ($variant && $variant->product) {
+                    // Lọc mã giảm giá dựa trên sản phẩm đang mua ngay
+                    $productId = $variant->product->id;
+                    $categoryId = $variant->product->category_id;
+                    
+                    // Debug: Ghi log để kiểm tra
+                    \Illuminate\Support\Facades\Log::info('Buy Now Product ID: ' . $productId);
+                    \Illuminate\Support\Facades\Log::info('Buy Now Category ID: ' . $categoryId);
+                    
+                    $availableDiscountCodes = $availableDiscountCodes->filter(function($discountCode) use ($productId, $categoryId) {
+                        // Nếu mã giảm giá áp dụng cho tất cả sản phẩm
+                        if ($discountCode->applicable_items === 'all_items') {
+                            return true;
+                        }
+                        
+                        // Nếu mã giảm giá áp dụng cho sản phẩm cụ thể
+                        if ($discountCode->applicable_items === 'specific_products') {
+                            $specificProductIds = $discountCode->products->whereNotNull('product_id')
+                                ->pluck('product_id')->toArray();
+                            return in_array($productId, $specificProductIds);
+                        }
+                        
+                        // Nếu mã giảm giá áp dụng cho danh mục cụ thể
+                        if ($discountCode->applicable_items === 'specific_categories' && $categoryId) {
+                            // Sử dụng specificCategories() để lấy danh mục cụ thể
+                            $specificCategoryIds = $discountCode->specificCategories()->pluck('category_id')->toArray();
+                            
+                            // Debug: Ghi log để kiểm tra
+                            \Illuminate\Support\Facades\Log::info('Buy Now Specific Category IDs: ' . json_encode($specificCategoryIds));
+                            \Illuminate\Support\Facades\Log::info('Buy Now Category ID Check: ' . $categoryId . ' in ' . json_encode($specificCategoryIds) . ' = ' . (in_array($categoryId, $specificCategoryIds) ? 'true' : 'false'));
+                            
+                            return in_array($categoryId, $specificCategoryIds);
+                        }
+                        
+                        return true;
+                    });
+                }
+            } elseif ($buyNow['type'] === 'combo' && !empty($buyNow['combo_id'])) {
+                $combo = \App\Models\Combo::find($buyNow['combo_id']);
+                if ($combo) {
+                    // Lọc mã giảm giá dựa trên combo đang mua ngay
+                    $comboId = $combo->id;
+                    
+                    $availableDiscountCodes = $availableDiscountCodes->filter(function($discountCode) use ($comboId) {
+                        // Nếu mã giảm giá áp dụng cho tất cả sản phẩm
+                        if ($discountCode->applicable_items === 'all_items') {
+                            return true;
+                        }
+                        
+                        // Nếu mã giảm giá áp dụng cho combo cụ thể
+                        if ($discountCode->applicable_items === 'specific_combos') {
+                            $specificComboIds = $discountCode->products->whereNotNull('combo_id')
+                                ->pluck('combo_id')->toArray();
+                            return in_array($comboId, $specificComboIds);
+                        }
+                        
+                        return false;
+                    });
+                }
+            }
+            
             $cartItems = collect();
             if ($buyNow['type'] === 'product') {
                 $variant = null;
                 if (!empty($buyNow['variant_id'])) {
                     $variant = \App\Models\ProductVariant::with([
-                        'product',
+                        'product.images',
+                        'product.category',
                         'variantValues.attribute'
                     ])->find($buyNow['variant_id']);
                 }
@@ -75,6 +272,14 @@ class CheckoutController extends Controller
                         $item->toppings = \App\Models\Topping::whereIn('id', $buyNow['toppings'])->get();
                     }
                     $item->combo = null;
+                    
+                    // Set primary image for buy now product
+                    if ($item->variant && $item->variant->product) {
+                        $item->variant->product->primary_image = $item->variant->product->images
+                            ->where('is_primary', true)
+                            ->first() ?? $item->variant->product->images->first();
+                    }
+                    
                     $cartItems->push($item);
                 }
             } elseif ($buyNow['type'] === 'combo') {
@@ -113,7 +318,7 @@ class CheckoutController extends Controller
                 'bufferTime' => GeneralSetting::getBufferTimeMinutes()
             ];
             
-            return view('customer.checkout.index', compact('cartItems', 'subtotal', 'cart', 'userAddresses', 'currentBranch', 'deliveryConfig'));
+            return view('customer.checkout.index', compact('cartItems', 'subtotal', 'cart', 'userAddresses', 'currentBranch', 'deliveryConfig', 'availableDiscountCodes'));
         }
 
         $cartItems = [];
@@ -168,6 +373,11 @@ class CheckoutController extends Controller
                     $item->variant->product->primary_image = $item->variant->product->images
                         ->where('is_primary', true)
                         ->first() ?? $item->variant->product->images->first();
+                    
+                    // Thêm S3 URL cho primary image
+                    if ($item->variant->product->primary_image && $item->variant->product->primary_image->img) {
+                        $item->variant->product->primary_image->s3_url = \Storage::disk('s3')->url($item->variant->product->primary_image->img);
+                    }
                 }
                 // Xử lý cho combo (nếu cần)
                 elseif ($item->combo) {
@@ -201,7 +411,7 @@ class CheckoutController extends Controller
             'bufferTime' => GeneralSetting::getBufferTimeMinutes()
         ];
 
-        return view('customer.checkout.index', compact('cartItems', 'subtotal', 'cart', 'userAddresses', 'currentBranch', 'deliveryConfig'));
+        return view('customer.checkout.index', compact('cartItems', 'subtotal', 'cart', 'userAddresses', 'currentBranch', 'deliveryConfig', 'availableDiscountCodes'));
     }
     
     /**
@@ -441,6 +651,18 @@ class CheckoutController extends Controller
             // Apply discount if available
             $discount = session('coupon_discount_amount', 0);
             
+            // Kiểm tra nếu có mã giảm giá free_shipping
+            $isFreeShipping = false;
+            if (session()->has('coupon_code')) {
+                $couponCode = session('coupon_code');
+                $discountCode = \App\Models\DiscountCode::where('code', $couponCode)->first();
+                if ($discountCode && $discountCode->discount_type === 'free_shipping') {
+                    $isFreeShipping = true;
+                    $discount = $shipping; // Đặt giá trị giảm giá bằng phí vận chuyển
+                    $shipping = 0; // Đặt phí vận chuyển bằng 0
+                }
+            }
+            
             // Calculate total
             $total = $subtotal + $shipping - $discount;
             
@@ -514,6 +736,15 @@ class CheckoutController extends Controller
                 $order->guest_district = $request->district;
                 $order->guest_ward = $request->ward;
                 $order->guest_city = $request->city;
+                $order->guest_latitude = $request->latitude;
+                $order->guest_longitude = $request->longitude;
+                
+                // Log để debug
+                \Illuminate\Support\Facades\Log::info('Setting guest coordinates for order', [
+                    'order_code' => $order->order_code,
+                    'guest_latitude' => $request->latitude,
+                    'guest_longitude' => $request->longitude
+                ]);
             }
             
             $order->branch_id = $branchId;
@@ -526,6 +757,16 @@ class CheckoutController extends Controller
             $order->estimated_delivery_time = $estimatedDeliveryTime;
             $order->delivery_fee = $shipping;
             $order->discount_amount = $discount;
+            
+            // Lưu discount_code_id nếu có mã giảm giá được áp dụng
+            if (session()->has('coupon_code')) {
+                $couponCode = session('coupon_code');
+                $discountCode = \App\Models\DiscountCode::where('code', $couponCode)->first();
+                if ($discountCode) {
+                    $order->discount_code_id = $discountCode->id;
+                }
+            }
+            
             $order->subtotal = $subtotal;
             $order->total_amount = $total;
             $order->notes = $request->notes;
@@ -659,9 +900,15 @@ class CheckoutController extends Controller
                 $user->balance -= $total;
                 $user->save();
                 
+                // Deduct stock for products and toppings after successful balance payment
+                $this->deductOrderStock($order);
+                
             } else { // COD
                 $order->status = 'awaiting_confirmation';
                 $order->save();
+                
+                // Deduct stock for products and toppings for COD orders
+                $this->deductOrderStock($order);
             }
 
             if ($order->status === 'awaiting_confirmation') {
@@ -691,13 +938,13 @@ class CheckoutController extends Controller
                     if ($cart->items()->count() == 0) {
                         $cart->status = 'completed';
                         $cart->save();
-                        session()->forget(['coupon_discount_amount', 'discount']);
+                        session()->forget(['coupon_discount_amount', 'coupon_code', 'discount']);
                     }
                 }
             }
             
             // Clear discount after order is placed
-            session()->forget('coupon_discount_amount');
+            session()->forget(['coupon_discount_amount', 'coupon_code']);
             
             DB::commit();
             
@@ -816,6 +1063,9 @@ class CheckoutController extends Controller
                         OrderSnapshotService::snapshotOrder($order);
                     }
                     
+                    // Deduct stock for products and toppings after successful payment
+                    $this->deductOrderStock($order);
+                    
                     // Dispatch event cho branch
                     NewOrderReceived::dispatch($order);
 
@@ -872,7 +1122,7 @@ class CheckoutController extends Controller
                         if ($cart->items()->count() == 0) {
                             $cart->status = 'completed';
                             $cart->save();
-                            session()->forget(['coupon_discount_amount', 'discount']);
+                            session()->forget(['coupon_discount_amount', 'coupon_code', 'discount']);
                         }
                     }
                 }
@@ -933,6 +1183,9 @@ class CheckoutController extends Controller
                             if ($inputData['vnp_ResponseCode'] == '00' && $inputData['vnp_TransactionStatus'] == '00') {
                                 $order->status = 'awaiting_confirmation'; // hoặc 'processing' tùy vào logic của bạn
                                 $order->payment->payment_status = 'completed';
+                                
+                                // Deduct stock for products and toppings after successful payment confirmation
+                                $this->deductOrderStock($order);
                                 
                                 // Clear cart items that were ordered
                                 if ($order->customer_id) {
@@ -1375,16 +1628,12 @@ class CheckoutController extends Controller
                 $originPrice = $item->combo->price;
 
                 $applicableDiscounts = $activeDiscountCodes->filter(function($discountCode) use ($item) {
-                    // Scope ALL
-                    if (($discountCode->applicable_scope === 'all') || ($discountCode->applicable_items === 'all_items')) {
+                    // Chỉ áp dụng mã giảm giá cho combo khi mã giảm giá áp dụng cho tất cả sản phẩm
+                    if ($discountCode->applicable_items === 'all_items') {
                         return true;
                     }
-                    // Scope specific products/categories - combo có thể áp dụng discount cho category
-                    $applies = $discountCode->products->contains(function($dp) use ($item){
-                        if ($dp->category_id === $item->combo->category_id) return true;
-                        return false;
-                    });
-                    return $applies;
+                    // Không áp dụng mã giảm giá cho combo trong các trường hợp khác
+                    return false;
                 });
 
                 // Get best discount value
@@ -1410,32 +1659,19 @@ class CheckoutController extends Controller
 
     /**
      * Calculate subtotal for Buy Now items
-     * Apply discount only to products, not combos
+     * Apply discount to products and combos based on discount code rules
      */
     private function calculateBuyNowSubtotal($cartItems)
     {
         $subtotal = 0;
+        $currentBranch = $this->branchService->getCurrentBranch();
+        $branchId = $currentBranch ? $currentBranch->id : null;
         
-        foreach ($cartItems as $item) {
-            if ($item->variant) {
-                // For products: apply discount
-                $currentBranch = $this->branchService->getCurrentBranch();
-                $branchId = $currentBranch ? $currentBranch->id : null;
-                
-                // Create a temporary collection with just this product item
-                $tempItems = collect([$item]);
-                $discountedSubtotal = $this->applyDiscountsToCartItems($tempItems, $branchId);
-                $subtotal += $discountedSubtotal;
-                
-            } elseif ($item->combo) {
-                // For combos: no discount, use original price
-                $comboPrice = $item->combo->price * $item->quantity;
-                $subtotal += $comboPrice;
-                
-                // Set final_price for consistency (used in order creation)
-                $item->final_price = $item->combo->price;
-            }
-        }
+        // Áp dụng giảm giá cho tất cả các mặt hàng (sản phẩm và combo)
+        // Phương thức applyDiscountsToCartItems đã được cập nhật để chỉ áp dụng
+        // mã giảm giá cho combo khi mã giảm giá áp dụng cho tất cả sản phẩm
+        $discountedSubtotal = $this->applyDiscountsToCartItems($cartItems, $branchId);
+        $subtotal = $discountedSubtotal;
         
         return $subtotal;
     }
@@ -1593,5 +1829,134 @@ class CheckoutController extends Controller
         }
 
         return $vnp_Url;
+    }
+
+    /**
+     * Deduct stock for product variants after successful order
+     *
+     * @param Order $order
+     * @return void
+     */
+    private function deductProductStock(Order $order)
+    {
+        try {
+            \DB::transaction(function () use ($order) {
+                foreach ($order->orderItems as $orderItem) {
+                    if ($orderItem->product_variant_id) {
+                        // Find the branch stock for this product variant
+                        $branchStock = \App\Models\BranchStock::where('branch_id', $order->branch_id)
+                            ->where('product_variant_id', $orderItem->product_variant_id)
+                            ->lockForUpdate()
+                            ->first();
+
+                        if ($branchStock) {
+                            // Check if there's enough stock
+                            if ($branchStock->stock_quantity >= $orderItem->quantity) {
+                                // Deduct the stock
+                                $branchStock->decrement('stock_quantity', $orderItem->quantity);
+                                
+                                \Illuminate\Support\Facades\Log::info('Product stock deducted', [
+                                    'order_code' => $order->order_code,
+                                    'product_variant_id' => $orderItem->product_variant_id,
+                                    'quantity_deducted' => $orderItem->quantity,
+                                    'remaining_stock' => $branchStock->fresh()->stock_quantity
+                                ]);
+                            } else {
+                                \Illuminate\Support\Facades\Log::warning('Insufficient stock for product', [
+                                    'order_code' => $order->order_code,
+                                    'product_variant_id' => $orderItem->product_variant_id,
+                                    'requested_quantity' => $orderItem->quantity,
+                                    'available_stock' => $branchStock->stock_quantity
+                                ]);
+                            }
+                        } else {
+                            \Illuminate\Support\Facades\Log::warning('Branch stock not found for product', [
+                                'order_code' => $order->order_code,
+                                'branch_id' => $order->branch_id,
+                                'product_variant_id' => $orderItem->product_variant_id
+                            ]);
+                        }
+                    }
+                }
+            });
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Error deducting product stock', [
+                'order_code' => $order->order_code,
+                'error' => $e->getMessage()
+            ]);
+        }
+    }
+
+    /**
+     * Deduct stock for toppings after successful order
+     *
+     * @param Order $order
+     * @return void
+     */
+    private function deductToppingStock(Order $order)
+    {
+        try {
+            \DB::transaction(function () use ($order) {
+                foreach ($order->orderItems as $orderItem) {
+                    // Check if this order item has toppings
+                    if ($orderItem->toppings && $orderItem->toppings->count() > 0) {
+                        foreach ($orderItem->toppings as $orderItemTopping) {
+                            // Find the topping stock for this topping
+                            $toppingStock = \App\Models\ToppingStock::where('branch_id', $order->branch_id)
+                                ->where('topping_id', $orderItemTopping->topping_id)
+                                ->lockForUpdate()
+                                ->first();
+
+                            if ($toppingStock) {
+                                $totalToppingQuantity = $orderItemTopping->quantity * $orderItem->quantity;
+                                
+                                // Check if there's enough stock
+                                if ($toppingStock->stock_quantity >= $totalToppingQuantity) {
+                                    // Deduct the stock
+                                    $toppingStock->decrement('stock_quantity', $totalToppingQuantity);
+                                    
+                                    \Illuminate\Support\Facades\Log::info('Topping stock deducted', [
+                                        'order_code' => $order->order_code,
+                                        'topping_id' => $orderItemTopping->topping_id,
+                                        'quantity_deducted' => $totalToppingQuantity,
+                                        'remaining_stock' => $toppingStock->fresh()->stock_quantity
+                                    ]);
+                                } else {
+                                    \Illuminate\Support\Facades\Log::warning('Insufficient stock for topping', [
+                                        'order_code' => $order->order_code,
+                                        'topping_id' => $orderItemTopping->topping_id,
+                                        'requested_quantity' => $totalToppingQuantity,
+                                        'available_stock' => $toppingStock->stock_quantity
+                                    ]);
+                                }
+                            } else {
+                                \Illuminate\Support\Facades\Log::warning('Topping stock not found', [
+                                    'order_code' => $order->order_code,
+                                    'branch_id' => $order->branch_id,
+                                    'topping_id' => $orderItemTopping->topping_id
+                                ]);
+                            }
+                        }
+                    }
+                }
+            });
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Error deducting topping stock', [
+                'order_code' => $order->order_code,
+                'error' => $e->getMessage()
+            ]);
+        }
+    }
+
+    /**
+     * Deduct stock for both products and toppings after successful order
+     *
+     * @param Order $order
+     * @return void
+     */
+    private function deductOrderStock(Order $order)
+    {
+        $this->deductProductStock($order);
+        $this->deductToppingStock($order);
     }
 }

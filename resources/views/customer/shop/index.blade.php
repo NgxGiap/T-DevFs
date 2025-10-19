@@ -456,6 +456,7 @@ $menuBanner = app('App\Http\Controllers\Customer\BannerController')->getBannersB
                     <option value="price-asc" {{ request('sort') == 'price-asc' ? 'selected' : '' }}>Giá: Thấp đến cao</option>
                     <option value="price-desc" {{ request('sort') == 'price-desc' ? 'selected' : '' }}>Giá: Cao đến thấp</option>
                     <option value="name-asc" {{ request('sort') == 'name-asc' ? 'selected' : '' }}>Tên: A-Z</option>
+                    <option value="name-desc" {{ request('sort') == 'name-desc' ? 'selected' : '' }}>Tên: Z-A</option>
                 </select>
             </div>
         </div>
@@ -495,7 +496,7 @@ $menuBanner = app('App\Http\Controllers\Customer\BannerController')->getBannersB
                         <div class="skeleton-card"></div>
                     @endfor
                 </div>
-                <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-6 product-cards-container">
+                <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6 product-cards-container">
                     @foreach($comboCategory->combos as $combo)
                         @include('customer.shop._combo_card', ['combo' => $combo])
                     @endforeach
@@ -514,7 +515,7 @@ $menuBanner = app('App\Http\Controllers\Customer\BannerController')->getBannersB
                         <div class="skeleton-card"></div>
                     @endfor
                 </div>
-                <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-6 product-cards-container">
+                <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6 product-cards-container">
                     @foreach($category->products as $product)
                         @include('customer.shop._product_card', ['product' => $product])
                     @endforeach

@@ -11,7 +11,6 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\Rule;
 use Illuminate\Http\JsonResponse; // Add this import
 
-
 class OrderController extends Controller
 {
     /**
@@ -27,7 +26,8 @@ class OrderController extends Controller
             $query->where('status', $request->status);
         }
         
-        $orders = $query->latest() // Sắp xếp đơn hàng mới nhất lên đầu
+        $orders = $query->with(['discountCode', 'branch', 'orderItems']) // Load relationships
+            ->latest() // Sắp xếp đơn hàng mới nhất lên đầu
             ->paginate(10) // Phân trang, mỗi trang 10 đơn hàng
             ->withQueryString(); // Giữ lại các tham số query khi phân trang
 
@@ -36,10 +36,18 @@ class OrderController extends Controller
             'all' => 'Tất cả',
             'awaiting_confirmation' => 'Chờ xác nhận',
             'confirmed' => 'Đã xác nhận',
+            'awaiting_driver' => 'Chờ tài xế nhận đơn',
+            'driver_confirmed' => 'Tài xế đã xác nhận đơn',
+            'waiting_driver_pick_up' => 'Tài xế đang chờ đơn',
+            'driver_picked_up' => 'Tài xế đã nhận đơn',
             'in_transit' => 'Đang giao',
             'delivered' => 'Đã giao',
             'item_received' => 'Đã nhận hàng',
-            'cancelled' => 'Đã hủy'
+            'cancelled' => 'Đã hủy',
+            'refunded' => 'Đã hoàn tiền',
+            'payment_failed' => 'Thanh toán thất bại',
+            'payment_received' => 'Đã nhận thanh toán',
+            'order_failed' => 'Đơn hàng thất bại'
         ];
 
         return view('customer.orders.index', compact('orders', 'statuses'));
@@ -59,6 +67,7 @@ class OrderController extends Controller
         $order->load([
             'branch',
             'driver',
+            'discountCode', // Tải thông tin mã giảm giá
             'payment', // Tải thông tin thanh toán
             'orderItems.productVariant.product.primaryImage',
             'orderItems.productVariant.variantValues.attribute',
@@ -72,14 +81,17 @@ class OrderController extends Controller
      * Update the status of an order.
      * This single method handles cancelling, confirming receipt, etc.
      */
-    public function updateStatus(Request $request, Order $order): JsonResponse
+    public function updateStatus(Request $request, Order $order)
     {
         // 1. Bảo mật: Đảm bảo khách hàng chỉ có thể cập nhật đơn hàng của chính mình.
         if ($order->customer_id !== Auth::id()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Bạn không có quyền truy cập đơn hàng này.'
-            ], 403);
+            if ($request->expectsJson() || $request->ajax()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Bạn không có quyền truy cập đơn hàng này.'
+                ], 403);
+            }
+            abort(403, 'Bạn không có quyền truy cập đơn hàng này.');
         }
 
         // 2. Validate yêu cầu
@@ -136,10 +148,13 @@ class OrderController extends Controller
 
         // Xử lý lỗi nếu không thể thay đổi trạng thái
         if (!$canUpdate) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Hành động không được phép hoặc trạng thái đơn hàng không hợp lệ.'
-            ], 422); // Trả về mã lỗi 422 nếu không thể xử lý
+            if ($request->expectsJson() || $request->ajax()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Hành động không được phép hoặc trạng thái đơn hàng không hợp lệ.'
+                ], 422);
+            }
+            return back()->with('error', 'Hành động không được phép hoặc trạng thái đơn hàng không hợp lệ.');
         }
 
         // 4. Cập nhật trạng thái và lưu dữ liệu
@@ -157,33 +172,42 @@ class OrderController extends Controller
             event(new OrderStatusUpdated($freshOrder, false, $order->getOriginal('status'), $newStatus));
         }
 
-        // Trả về kết quả thành công và dữ liệu đơn hàng đã được cập nhật
-        return response()->json([
-            'success' => true,
-            'message' => $message,
-            'order'   => $freshOrder
-        ]);
+        // Trả về kết quả thành công
+        if ($request->expectsJson() || $request->ajax()) {
+            return response()->json([
+                'success' => true,
+                'message' => $message,
+                'order'   => $freshOrder
+            ]);
+        }
+        
+        return back()->with('success', $message);
     }
 
     /**
-     * Trả về partial danh sách đơn hàng cho AJAX reload.
-     * Hỗ trợ lọc theo trạng thái.
+     * Trả về HTML partial cho order status update (dùng cho AJAX)
      */
-    public function listPartial(Request $request)
+    public function partial(Order $order)
     {
-        $query = Order::where('customer_id', Auth::id());
-        
-        // Lọc theo trạng thái nếu có
-        if ($request->has('status') && $request->status != 'all') {
-            $query->where('status', $request->status);
+        // Bảo mật: Đảm bảo khách hàng chỉ có thể xem đơn hàng của chính mình.
+        if ($order->customer_id !== Auth::id()) {
+            abort(403, 'BẠN KHÔNG CÓ QUYỀN TRUY CẬP ĐƠN HÀNG NÀY.');
         }
-        
-        $orders = $query->latest()
-            ->paginate(10)
-            ->withQueryString(); // Giữ lại các tham số query khi phân trang
-            
-        return view('customer.orders.partials.list', compact('orders'))->render();
+
+        // Tải sẵn các relationship để tối ưu truy vấn
+        $order->load([
+            'branch',
+            'driver',
+            'payment',
+            'orderItems.productVariant.product.primaryImage',
+            'orderItems.productVariant.variantValues.attribute',
+            'orderItems.toppings'
+        ]);
+
+        return view('customer.orders.partials.status_update', compact('order'));
     }
+
+    // Phương thức listPartial đã được xóa vì không còn cần thiết cho AJAX filtering
 
     /**
      * Hiển thị form nhập mã đơn hàng để theo dõi.
