@@ -53,7 +53,7 @@ class BranchStockController extends Controller
                         ],
                         ['stock_quantity' => $quantity]
                     );
-                }
+                }                   
             }
 
             DB::commit();
